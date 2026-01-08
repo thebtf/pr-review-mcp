@@ -1,0 +1,45 @@
+{
+  "name": "pr-review-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for PR review processing with GraphQL-based GitHub integration",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "pr-review-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "coderabbit",
+    "github",
+    "pr-review",
+    "code-review",
+    "model-context-protocol",
+    "graphql"
+  ],
+  "author": "thebtf",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.0.0"
+  }
+}
