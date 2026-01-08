@@ -30,7 +30,13 @@ npx pr-review-mcp
 
 ## Configuration
 
-Add to Claude Desktop config (`%APPDATA%\Claude\claude_desktop_config.json`):
+Add to Claude Desktop config:
+
+| Platform | Config Path |
+|----------|-------------|
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
 
 ```json
 {

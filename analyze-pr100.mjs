@@ -15,8 +15,22 @@ console.log('📊 Analyzing PR #100 comment types\n');
 
 const client = new GitHubClient();
 
+// Check prerequisites
+try {
+  client.checkPrerequisites();
+} catch (e) {
+  console.error('❌ Prerequisites check failed:', e.message);
+  process.exit(1);
+}
+
 // Get all comments
-const list = await prList({ owner, repo, pr, max: 10 }, client);
+let list;
+try {
+  list = await prList({ owner, repo, pr, max: 10 }, client);
+} catch (e) {
+  console.error('❌ Failed to fetch comments:', e.message);
+  process.exit(1);
+}
 console.log(`Found ${list.total} comments\n`);
 
 // Analyze each comment
@@ -28,7 +42,13 @@ for (const comment of list.comments) {
   console.log(`   Has AI Prompt: ${comment.hasAiPrompt}`);
 
   // Get full details
-  const detail = await prGet({ owner, repo, pr, id: comment.id }, client);
+  let detail;
+  try {
+    detail = await prGet({ owner, repo, pr, id: comment.id }, client);
+  } catch (e) {
+    console.error(`   ❌ Failed to fetch details: ${e.message}`);
+    continue;
+  }
 
   // Check for different suggestion types
   const body = detail.body || '';

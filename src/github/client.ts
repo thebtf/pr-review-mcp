@@ -113,19 +113,13 @@ class CircuitBreaker {
 // ============================================================================
 
 class RateLimitManager {
-  private remaining = 5000;
-  private resetAt: Date | null = null;
-  private readonly minRemaining = 100;
-
+  /**
+   * Execute with exponential backoff on rate limit errors.
+   * Uses reactive approach: retry on 429 errors with jitter.
+   * Note: gh CLI doesn't expose rate limit headers, so proactive
+   * rate limit tracking is not implemented.
+   */
   async executeWithBackoff<T>(fn: () => Promise<T>, attempt = 0): Promise<T> {
-    // Check if we should wait
-    if (this.remaining < this.minRemaining && this.resetAt) {
-      const waitMs = this.resetAt.getTime() - Date.now();
-      if (waitMs > 0) {
-        await this.sleep(Math.min(waitMs, 60000));
-      }
-    }
-
     try {
       return await fn();
     } catch (e) {
@@ -150,11 +144,6 @@ class RateLimitManager {
 
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  update(remaining: number, resetAt: Date): void {
-    this.remaining = remaining;
-    this.resetAt = resetAt;
   }
 }
 

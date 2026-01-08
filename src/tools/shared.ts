@@ -108,7 +108,7 @@ export async function fetchAllThreads(
     }
 
     if (!threads.pageInfo.hasNextPage) {
-      return { comments, totalCount, cursor, hasMore: false };
+      return { comments, totalCount, cursor: threads.pageInfo.endCursor, hasMore: false };
     }
     cursor = threads.pageInfo.endCursor;
   }

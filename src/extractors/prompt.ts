@@ -107,23 +107,39 @@ export function extractPrompt(body: string | null | undefined): PromptExtraction
 }
 
 /**
- * Clean extracted prompt
+ * Clean extracted prompt while preserving code block indentation
  */
 function cleanPrompt(raw: string | undefined): string {
   if (!raw) return '';
 
-  return raw
-    // Remove HTML tags
+  // First pass: remove HTML tags and markdown formatting
+  let cleaned = raw
     .replace(/<[^>]+>/g, '')
-    // Remove markdown formatting (but preserve content)
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    // Normalize multiple spaces (but preserve newlines for code)
-    .replace(/[ \t]+/g, ' ')
-    // Remove leading/trailing space on each line
-    .split('\n').map(line => line.trim()).join('\n')
-    // Remove leading/trailing whitespace
-    .trim();
+    .replace(/\*\*([^*]+)\*\*/g, '$1');
+
+  // Process line by line, preserving indentation in code blocks
+  const lines = cleaned.split('\n');
+  const result: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    // Toggle code block state on fence markers
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line.trim());
+      continue;
+    }
+
+    if (inCodeBlock) {
+      // Preserve indentation inside code blocks
+      result.push(line.trimEnd());
+    } else {
+      // Normalize spaces and trim outside code blocks
+      result.push(line.replace(/[ \t]+/g, ' ').trim());
+    }
+  }
+
+  return result.join('\n').trim();
 }
 
 /**
