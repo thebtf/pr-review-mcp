@@ -46,6 +46,7 @@ export async function prGet(
     file: comment.file,
     line: comment.line,
     severity: comment.severity,
+    source: comment.source,
     title: comment.title,
     body: comment.fullBody,
     aiPrompt: comment.aiPrompt ? {

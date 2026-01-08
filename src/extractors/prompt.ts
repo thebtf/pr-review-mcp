@@ -1,7 +1,9 @@
 /**
- * AI Prompt Extractor - 4-layer defense pattern matching
- * Ported from coderabbit-processor.js lib/prompt-extractor.js
+ * AI Prompt Extractor - Multi-source support
+ * Sources: CodeRabbit, Gemini Code Assist, Codex
  */
+
+import type { CommentSource } from '../github/types.js';
 
 export type PromptConfidence = 'high' | 'low' | 'absent';
 
@@ -81,12 +83,24 @@ const PROMPT_PATTERNS: PatternDef[] = [
 
 /**
  * Extract AI prompt from comment body
+ * @param body - Comment body text
+ * @param source - Comment source (coderabbit, gemini, codex, unknown)
  */
-export function extractPrompt(body: string | null | undefined): PromptExtraction {
+export function extractPrompt(body: string | null | undefined, source: CommentSource = 'unknown'): PromptExtraction {
   if (!body || typeof body !== 'string') {
     return { prompt: null, confidence: 'absent', pattern: null };
   }
 
+  // Source-specific extraction
+  if (source === 'gemini') {
+    return extractGeminiPrompt(body);
+  }
+
+  if (source === 'codex') {
+    return extractCodexPrompt(body);
+  }
+
+  // CodeRabbit and unknown: use pattern matching
   for (const { pattern, confidence, name, captureGroup } of PROMPT_PATTERNS) {
     const match = body.match(pattern);
     if (match) {
@@ -104,6 +118,54 @@ export function extractPrompt(body: string | null | undefined): PromptExtraction
   }
 
   return { prompt: null, confidence: 'absent', pattern: null };
+}
+
+/**
+ * Extract prompt from Gemini Code Assist comments
+ * Gemini doesn't have explicit AI prompts - the whole description is the instruction
+ */
+function extractGeminiPrompt(body: string): PromptExtraction {
+  // Remove the severity badge
+  const cleaned = body
+    .replace(/!\[(critical|high|medium|low)\]\([^)]+\)/gi, '')
+    .trim();
+
+  if (cleaned.length < 20) {
+    return { prompt: null, confidence: 'absent', pattern: null };
+  }
+
+  return {
+    prompt: cleaned,
+    confidence: 'low', // Gemini doesn't have explicit AI prompts
+    pattern: 'gemini_description'
+  };
+}
+
+/**
+ * Extract prompt from Codex comments
+ * Format: **<sub><sub>![P2 Badge](...)</sub></sub> Title**\n\nDescription\n\nUseful? React with...
+ */
+function extractCodexPrompt(body: string): PromptExtraction {
+  // Remove badge and formatting
+  let cleaned = body
+    // Remove sub tags and badge
+    .replace(/<sub><sub>!\[P\d\s*Badge\][^)]+\)<\/sub><\/sub>/gi, '')
+    // Remove bold wrapper around title
+    .replace(/^\*\*\s*/, '')
+    .replace(/\s*\*\*\n/, '\n')
+    // Remove feedback prompt
+    .replace(/\n*Useful\?\s*React with.*$/i, '')
+    .trim();
+
+  if (cleaned.length < 20) {
+    return { prompt: null, confidence: 'absent', pattern: null };
+  }
+
+  return {
+    prompt: cleaned,
+    confidence: 'low', // Codex doesn't have explicit AI prompts
+    pattern: 'codex_description'
+  };
 }
 
 /**
@@ -144,11 +206,23 @@ function cleanPrompt(raw: string | undefined): string {
 
 /**
  * Extract issue title from comment body
+ * @param body - Comment body text
+ * @param source - Comment source (coderabbit, gemini, codex, unknown)
  */
-export function extractTitle(body: string | null | undefined): string {
+export function extractTitle(body: string | null | undefined, source: CommentSource = 'unknown'): string {
   if (!body) return 'N/A';
 
-  // Try to get first bold text
+  // Gemini: First sentence after badge
+  if (source === 'gemini') {
+    const cleaned = body.replace(/!\[(critical|high|medium|low)\]\([^)]+\)/gi, '').trim();
+    const firstSentence = cleaned.match(/^([^.!?]+[.!?])/);
+    if (firstSentence) {
+      return firstSentence[1].slice(0, 100);
+    }
+    return cleaned.slice(0, 100);
+  }
+
+  // Try to get first bold text (CodeRabbit style)
   const boldMatch = body.match(/\*\*([^*]+)\*\*/);
   if (boldMatch) {
     return boldMatch[1].slice(0, 100);

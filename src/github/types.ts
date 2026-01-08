@@ -83,6 +83,9 @@ export interface GraphQLResponse<T> {
   errors?: GraphQLError[];
 }
 
+// Comment source types
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'unknown';
+
 // Processed comment type
 export interface ProcessedComment {
   id: string;
@@ -94,6 +97,7 @@ export interface ProcessedComment {
   canResolve: boolean;
   severity: string;
   type: string;
+  source: CommentSource;
   title: string;
   body: string;
   fullBody: string;
@@ -150,6 +154,7 @@ export interface ListComment {
   file: string;
   line: number | string;
   severity: string;
+  source: CommentSource;
   title: string;
   resolved: boolean;
   hasAiPrompt: boolean;
@@ -174,6 +179,7 @@ export interface GetOutput {
   file: string;
   line: number | string;
   severity: string;
+  source: CommentSource;
   title: string;
   body: string;
   aiPrompt: {

@@ -41,6 +41,7 @@ export async function prList(
     file: c.file,
     line: c.line,
     severity: c.severity,
+    source: c.source,
     title: c.title,
     resolved: c.resolved,
     hasAiPrompt: c.aiPrompt !== null

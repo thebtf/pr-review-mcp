@@ -20,8 +20,8 @@ import { extractSeverity } from '../extractors/severity.js';
 export function processThread(thread: ReviewThread): ProcessedComment {
   const firstComment = thread.comments?.nodes?.[0];
   const body = firstComment?.body || '';
-  const { severity, type } = extractSeverity(body);
-  const extraction = extractPrompt(body);
+  const { severity, type, source } = extractSeverity(body);
+  const extraction = extractPrompt(body, source);
 
   return {
     id: firstComment?.id || thread.id,
@@ -33,7 +33,8 @@ export function processThread(thread: ReviewThread): ProcessedComment {
     canResolve: thread.viewerCanResolve || false,
     severity,
     type,
-    title: extractTitle(body),
+    source,
+    title: extractTitle(body, source),
     body: truncateBody(body),
     fullBody: body,
     aiPrompt: extraction.prompt,
