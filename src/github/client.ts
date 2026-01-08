@@ -117,7 +117,7 @@ class RateLimitManager {
   private resetAt: Date | null = null;
   private readonly minRemaining = 100;
 
-  async executeWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
+  async executeWithBackoff<T>(fn: () => Promise<T>, attempt = 0): Promise<T> {
     // Check if we should wait
     if (this.remaining < this.minRemaining && this.resetAt) {
       const waitMs = this.resetAt.getTime() - Date.now();
@@ -131,10 +131,18 @@ class RateLimitManager {
     } catch (e) {
       if (e instanceof Error &&
           (e.message.includes('429') || e.message.includes('rate limit'))) {
-        // Rate limit - backoff with jitter
+        // Rate limit - backoff with jitter, max 3 retries
+        if (attempt >= 3) {
+          throw new StructuredError(
+            'rate_limit',
+            'Rate limit exceeded after 3 retries',
+            true,
+            'Wait a few minutes and try again'
+          );
+        }
         const jitter = Math.random() * 10000;
         await this.sleep(60000 + jitter);
-        return this.executeWithBackoff(fn);
+        return this.executeWithBackoff(fn, attempt + 1);
       }
       throw e;
     }
@@ -211,7 +219,8 @@ export class GitHubClient {
     // Add variables
     for (const [key, value] of Object.entries(variables)) {
       if (value !== undefined && value !== null) {
-        const type = typeof value === 'number' ? '-F' : '-f';
+        // -F for non-string values (numbers, booleans), -f for strings
+        const type = typeof value !== 'string' ? '-F' : '-f';
         args.push(type, `${key}=${value}`);
       }
     }

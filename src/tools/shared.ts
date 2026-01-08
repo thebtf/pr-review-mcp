@@ -60,6 +60,7 @@ export interface FetchResult {
   comments: ProcessedComment[];
   totalCount: number;
   cursor: string | null;
+  hasMore: boolean;
 }
 
 /**
@@ -106,9 +107,12 @@ export async function fetchAllThreads(
       if (comments.length >= maxItems) break;
     }
 
-    if (!threads.pageInfo.hasNextPage) break;
+    if (!threads.pageInfo.hasNextPage) {
+      return { comments, totalCount, cursor, hasMore: false };
+    }
     cursor = threads.pageInfo.endCursor;
   }
 
-  return { comments, totalCount, cursor };
+  // Reached maxItems but more pages exist
+  return { comments, totalCount, cursor, hasMore: true };
 }

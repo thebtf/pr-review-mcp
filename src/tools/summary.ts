@@ -40,7 +40,7 @@ export async function prSummary(
   return {
     pr: `${owner}/${repo}#${pr}`,
     total: totalCount,
-    resolved: totalCount - unresolvedComments.length,
+    resolved: comments.filter(c => c.resolved).length,
     unresolved: unresolvedComments.length,
     outdated: comments.filter(c => c.outdated).length,
     bySeverity,

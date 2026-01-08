@@ -17,16 +17,18 @@ export const ChangesInputSchema = z.object({
 
 /**
  * Get comments since cursor for incremental updates
+ * @param retryCount - Internal retry counter for invalid cursor recovery
  */
 export async function prChanges(
   input: ChangesInput,
-  client: GitHubClient
+  client: GitHubClient,
+  retryCount = 0
 ): Promise<ChangesOutput> {
   const validated = ChangesInputSchema.parse(input);
   const { owner, repo, pr, cursor, max = 50 } = validated;
 
   try {
-    const { comments, cursor: nextCursor, totalCount } = await fetchAllThreads(
+    const { comments, cursor: nextCursor, hasMore } = await fetchAllThreads(
       client,
       owner,
       repo,
@@ -51,13 +53,14 @@ export async function prChanges(
     return {
       comments: listComments,
       cursor: nextCursor,
-      hasMore: comments.length < totalCount
+      hasMore
     };
   } catch (e) {
-    // If cursor is invalid, fetch from beginning
-    if (e instanceof Error && (e.message.includes('cursor') || e.message.includes('invalid'))) {
+    // If cursor is invalid, fetch from beginning (max 1 retry)
+    if (retryCount < 1 && e instanceof Error &&
+        (e.message.includes('cursor') || e.message.includes('invalid'))) {
       console.warn('Cursor invalid, fetching from beginning');
-      return prChanges({ ...input, cursor: undefined }, client);
+      return prChanges({ ...input, cursor: undefined }, client, retryCount + 1);
     }
     throw e;
   }

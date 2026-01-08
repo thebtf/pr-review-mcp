@@ -9,7 +9,7 @@ MCP server for PR review processing with GraphQL-based GitHub integration.
 - **4-Layer AI Extraction** - High-confidence prompt detection from CodeRabbit comments
 - **Native Thread Resolution** - GraphQL mutation (not REST workaround)
 - **Circuit Breaker** - Resilient to API failures
-- **Workflow Prompt** - Automated 5-phase review processing
+- **Workflow Prompt** - Automated 7-step review processing
 
 ## Installation
 

@@ -30,7 +30,7 @@ export async function prList(
   const validated = ListInputSchema.parse(input);
   const { owner, repo, pr, filter = {}, max = 20 } = validated;
 
-  const { comments, totalCount } = await fetchAllThreads(client, owner, repo, pr, {
+  const { comments, totalCount, hasMore } = await fetchAllThreads(client, owner, repo, pr, {
     filter,
     maxItems: max
   });
@@ -49,6 +49,6 @@ export async function prList(
   return {
     comments: listComments,
     total: totalCount,
-    hasMore: comments.length < totalCount
+    hasMore
   };
 }

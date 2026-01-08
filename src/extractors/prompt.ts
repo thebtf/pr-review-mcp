@@ -31,7 +31,16 @@ const PROMPT_PATTERNS: PatternDef[] = [
     captureGroup: 1
   },
 
-  // Layer 2: CodeRabbit's "Prompt for AI Agents" section (HIGH confidence)
+  // Layer 2: CodeRabbit's "🤖 Prompt for AI Agents" details block (HIGH confidence)
+  // MUST have 🤖 emoji to distinguish from Analysis/Fix blocks
+  {
+    pattern: /<details>\s*<summary>\s*🤖[^<]*<\/summary>\s*```[^\n]*\n([\s\S]*?)```\s*<\/details>/i,
+    confidence: 'high',
+    name: 'coderabbit_details_prompt',
+    captureGroup: 1
+  },
+
+  // Layer 2b: Standalone 🤖 header with code block (HIGH confidence)
   {
     pattern: /🤖\s*(?:Prompt for AI|AI Prompt|Agent Prompt)[^\n]*\n```[^\n]*\n([\s\S]*?)```/i,
     confidence: 'high',
@@ -39,15 +48,8 @@ const PROMPT_PATTERNS: PatternDef[] = [
     captureGroup: 1
   },
 
-  // Layer 2b: Details block with AI/Agent/Fix summary (HIGH confidence)
-  {
-    pattern: /<details>\s*<summary>[^<]*(?:AI|Agent|Fix|Suggestion)[^<]*<\/summary>([\s\S]*?)<\/details>/i,
-    confidence: 'high',
-    name: 'details_ai_block',
-    captureGroup: 1
-  },
-
-  // Layer 3: Suggestion code blocks (LOW confidence)
+  // Layer 3: Suggestion code blocks (LOW confidence) - treat as fallback
+  // Note: These should ideally be extracted separately as "committable suggestions"
   {
     pattern: /```suggestion\n([\s\S]*?)```/,
     confidence: 'low',
