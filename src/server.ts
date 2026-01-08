@@ -25,6 +25,7 @@ import { prList, ListInputSchema } from './tools/list.js';
 import { prGet, GetInputSchema } from './tools/get.js';
 import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
+import { prInvoke, InvokeInputSchema, InvokeInput } from './tools/invoke.js';
 import type { SummaryInput, ListInput, GetInput, ChangesInput } from './github/types.js';
 
 // ============================================================================
@@ -268,6 +269,36 @@ export class PRReviewMCPServer {
               },
               required: ['owner', 'repo', 'pr']
             }
+          },
+          {
+            name: 'pr_invoke',
+            description: 'Invoke AI code review agents (CodeRabbit, Sourcery, Qodo) on a PR',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                pr: { type: 'number', description: 'Pull request number' },
+                agent: {
+                  type: 'string',
+                  enum: ['coderabbit', 'sourcery', 'qodo', 'all'],
+                  description: 'Agent to invoke, or "all" for configured agents from .github/pr-review.json'
+                },
+                options: {
+                  type: 'object',
+                  properties: {
+                    focus: { type: 'string', description: 'Review focus: security, performance, best-practices' },
+                    files: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Specific files to review'
+                    },
+                    incremental: { type: 'boolean', description: 'Review only new changes since last review' }
+                  }
+                }
+              },
+              required: ['owner', 'repo', 'pr', 'agent']
+            }
           }
         ] as Tool[]
       };
@@ -314,6 +345,14 @@ export class PRReviewMCPServer {
           case 'pr_changes': {
             const input = args as unknown as ChangesInput;
             const result = await prChanges(input, this.githubClient);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_invoke': {
+            const input = args as unknown as InvokeInput;
+            const result = await prInvoke(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
             };
