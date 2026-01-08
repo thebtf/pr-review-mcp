@@ -4,6 +4,9 @@
  * Provides tools for processing PR reviews with GraphQL-based GitHub integration.
  * Features: cursor pagination (zero comments missed), 4-layer AI prompt extraction,
  * circuit breaker, and automated workflow prompt.
+ *
+ * @module pr-review-mcp
+ * @version 1.0.0
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
