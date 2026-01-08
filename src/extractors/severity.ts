@@ -5,7 +5,7 @@
 
 export type Severity = 'CRIT' | 'MAJOR' | 'MINOR' | 'TRIVIAL' | 'ISSUE' | 'REFACTOR' | 'NITPICK' | 'DOCS' | 'N/A';
 export type IssueType = 'issue' | 'refactor' | 'nitpick' | 'docs' | 'other';
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'unknown';
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'unknown';
 
 export interface SeverityResult {
   severity: Severity;
@@ -67,10 +67,15 @@ export const SEVERITY_ICONS: Record<Severity, string> = {
 // ============================================================================
 
 /**
- * Detect comment source from body
+ * Detect comment source from body and author
  */
-export function detectSource(body: string | null | undefined): CommentSource {
+export function detectSource(body: string | null | undefined, author?: string): CommentSource {
   if (!body) return 'unknown';
+
+  // Check author first (most reliable for Copilot)
+  if (author === 'copilot-pull-request-reviewer' || author === 'github-copilot') {
+    return 'copilot';
+  }
 
   // CodeRabbit markers
   if (body.includes('CodeRabbit') || body.includes('🤖 Prompt for AI Agents') || body.includes('🧩 Analysis chain')) {
@@ -92,10 +97,20 @@ export function detectSource(body: string | null | undefined): CommentSource {
 
 /**
  * Extract severity from comment body
+ * @param body - Comment body text
+ * @param author - Comment author login (used for Copilot detection)
  */
-export function extractSeverity(body: string | null | undefined): SeverityResult {
+export function extractSeverity(body: string | null | undefined, author?: string): SeverityResult {
   if (!body) {
     return { severity: 'N/A', type: 'other', source: 'unknown' };
+  }
+
+  // Check author-based source first (for Copilot)
+  const authorSource = detectSource(body, author);
+  if (authorSource === 'copilot') {
+    // Copilot doesn't have severity badges - analyze content for severity hints
+    const severity = detectCopilotSeverity(body);
+    return { severity, type: severity === 'N/A' ? 'other' : 'issue', source: 'copilot' };
   }
 
   for (const { pattern, severity, source } of SEVERITY_PATTERNS) {
@@ -113,8 +128,35 @@ export function extractSeverity(body: string | null | undefined): SeverityResult
   }
 
   // No severity pattern matched, try to detect source anyway
-  const source = detectSource(body);
+  const source = detectSource(body, author);
   return { severity: 'N/A', type: 'other', source };
+}
+
+/**
+ * Detect severity from Copilot comment content (heuristic)
+ */
+function detectCopilotSeverity(body: string): Severity {
+  const lower = body.toLowerCase();
+
+  // Critical indicators
+  if (lower.includes('security') || lower.includes('vulnerability') ||
+      lower.includes('critical') || lower.includes('dangerous')) {
+    return 'CRIT';
+  }
+
+  // Major indicators
+  if (lower.includes('bug') || lower.includes('error') || lower.includes('incorrect') ||
+      lower.includes('wrong') || lower.includes('broken') || lower.includes('unused')) {
+    return 'MAJOR';
+  }
+
+  // Minor indicators (suggestions, improvements)
+  if (lower.includes('consider') || lower.includes('should') || lower.includes('could') ||
+      lower.includes('suggestion') || lower.includes('redundant') || lower.includes('simplif')) {
+    return 'MINOR';
+  }
+
+  return 'N/A';
 }
 
 /**

@@ -20,7 +20,8 @@ import { extractSeverity } from '../extractors/severity.js';
 export function processThread(thread: ReviewThread): ProcessedComment {
   const firstComment = thread.comments?.nodes?.[0];
   const body = firstComment?.body || '';
-  const { severity, type, source } = extractSeverity(body);
+  const author = firstComment?.author?.login;
+  const { severity, type, source } = extractSeverity(body, author);
   const extraction = extractPrompt(body, source);
 
   return {
