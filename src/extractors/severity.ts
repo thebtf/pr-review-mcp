@@ -1,11 +1,11 @@
 /**
  * Severity Extraction
- * Supports multiple sources: CodeRabbit, Gemini Code Assist, Codex
+ * Supports multiple sources: CodeRabbit, Gemini Code Assist, Codex, Copilot, Sourcery
  */
 
 export type Severity = 'CRIT' | 'MAJOR' | 'MINOR' | 'TRIVIAL' | 'ISSUE' | 'REFACTOR' | 'NITPICK' | 'DOCS' | 'N/A';
 export type IssueType = 'issue' | 'refactor' | 'nitpick' | 'docs' | 'other';
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'unknown';
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'unknown';
 
 export interface SeverityResult {
   severity: Severity;
@@ -44,6 +44,12 @@ const SEVERITY_PATTERNS: SeverityPattern[] = [
   { pattern: /!\[P0\s*Badge\]\(https:\/\/img\.shields\.io\/badge\/P0/i, severity: 'CRIT', source: 'codex' },
   { pattern: /!\[P1\s*Badge\]\(https:\/\/img\.shields\.io\/badge\/P1/i, severity: 'MAJOR', source: 'codex' },
   { pattern: /!\[P2\s*Badge\]\(https:\/\/img\.shields\.io\/badge\/P2/i, severity: 'MINOR', source: 'codex' },
+
+  // Sourcery patterns (**issue/suggestion (category):**)
+  { pattern: /\*\*issue\s*\(security\):\*\*/i, severity: 'CRIT', source: 'sourcery' },
+  { pattern: /\*\*issue\s*\(bug_risk\):\*\*/i, severity: 'MAJOR', source: 'sourcery' },
+  { pattern: /\*\*issue\s*\([^)]+\):\*\*/i, severity: 'ISSUE', source: 'sourcery' },
+  { pattern: /\*\*suggestion\s*\([^)]+\):\*\*/i, severity: 'MINOR', source: 'sourcery' },
 ];
 
 export const SEVERITY_ORDER: Severity[] = [
@@ -72,9 +78,12 @@ export const SEVERITY_ICONS: Record<Severity, string> = {
 export function detectSource(body: string | null | undefined, author?: string): CommentSource {
   if (!body) return 'unknown';
 
-  // Check author first (most reliable for Copilot)
+  // Check author first (most reliable for Copilot and Sourcery)
   if (author === 'copilot-pull-request-reviewer' || author === 'github-copilot') {
     return 'copilot';
+  }
+  if (author === 'sourcery-ai' || author === 'sourcery-ai-experiments') {
+    return 'sourcery';
   }
 
   // CodeRabbit markers
