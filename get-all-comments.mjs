@@ -13,16 +13,16 @@ try {
   process.exit(1);
 }
 
-// Fetch comment list
+// Fetch unresolved comment list
 let list;
 try {
-  list = await prList({ owner: 'thebtf', repo: 'pr-review-mcp', pr: 2, max: 10 }, client);
+  list = await prList({ owner: 'thebtf', repo: 'pr-review-mcp', pr: 2, filter: { resolved: false }, max: 10 }, client);
 } catch (e) {
   console.error('❌ Failed to fetch comments:', e.message);
   process.exit(1);
 }
 
-console.log(`\n📋 ${list.total} comments to fix:\n`);
+console.log(`\n📋 ${list.comments.length} unresolved comments:\n`);
 
 for (const c of list.comments) {
   let detail;

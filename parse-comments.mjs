@@ -1,7 +1,31 @@
+#!/usr/bin/env node
+/**
+ * Parse CodeRabbit comments from MCP tool output file
+ * Usage: node parse-comments.mjs <path-to-json-file>
+ */
 import fs from 'fs';
-const filePath = 'C:/Users/btf/.claude/projects/D--Dev-agent-skills/23171329-5597-4650-974c-9b280b66931f/tool-results/mcp-coderabbitai-get_review_comments-1767910352288.txt';
-const data = JSON.parse(fs.readFileSync(filePath));
-const comments = JSON.parse(data[0].text);
+
+const filePath = process.argv[2];
+
+if (!filePath) {
+  console.error('Usage: node parse-comments.mjs <path-to-json-file>');
+  process.exit(1);
+}
+
+if (!fs.existsSync(filePath)) {
+  console.error(`Error: File not found: ${filePath}`);
+  process.exit(1);
+}
+
+let data, comments;
+try {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  data = JSON.parse(raw);
+  comments = JSON.parse(data[0]?.text || '[]');
+} catch (e) {
+  console.error(`Error parsing file: ${e.message}`);
+  process.exit(1);
+}
 
 // Group by severity
 const bySeverity = {};

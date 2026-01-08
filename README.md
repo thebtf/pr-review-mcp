@@ -13,14 +13,27 @@ MCP server for PR review processing with GraphQL-based GitHub integration.
 
 ## Installation
 
+### From npm (when published)
+
 ```bash
-npm install pr-review-mcp
+npm install -g pr-review-mcp
 ```
 
-Or run directly:
+### Local Development
 
 ```bash
-npx pr-review-mcp
+# Clone repository
+git clone https://github.com/thebtf/pr-review-mcp.git
+cd pr-review-mcp
+
+# Install dependencies
+npm install
+
+# Build
+npm run build
+
+# Link globally (optional)
+npm link
 ```
 
 ## Prerequisites
@@ -37,6 +50,21 @@ Add to Claude Desktop config:
 | Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
 | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Linux | `~/.config/Claude/claude_desktop_config.json` |
+
+For local development:
+
+```json
+{
+  "mcpServers": {
+    "pr-review": {
+      "command": "node",
+      "args": ["/path/to/pr-review-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+After npm publish:
 
 ```json
 {
