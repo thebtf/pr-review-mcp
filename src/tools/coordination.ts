@@ -146,7 +146,7 @@ export async function prClaimWork(
   };
 }
 
-export function prReportProgress(
+export async function prReportProgress(
   input: ReportProgressInput
 ) {
   const { agent_id, file, status, result } = input;
@@ -167,7 +167,7 @@ export function prReportProgress(
   };
 }
 
-export function prGetWorkStatus(
+export async function prGetWorkStatus(
   input: GetWorkStatusInput
 ) {
   // We currently ignore run_id in input as we only support singleton active run
