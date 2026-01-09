@@ -80,18 +80,18 @@ function generateTrackerBody(
   ];
 
   // Group by severity
-  const bySevertiy = new Map<string, TrackerItem[]>();
+  const bySeverity = new Map<string, TrackerItem[]>();
   for (const item of items) {
-    const list = bySevertiy.get(item.severity) || [];
+    const list = bySeverity.get(item.severity) || [];
     list.push(item);
-    bySevertiy.set(item.severity, list);
+    bySeverity.set(item.severity, list);
   }
 
   // Order: CRIT, MAJOR, MINOR, N/A
   const order = ['CRIT', 'MAJOR', 'MINOR', 'N/A'];
 
   for (const severity of order) {
-    const severityItems = bySevertiy.get(severity);
+    const severityItems = bySeverity.get(severity);
     if (!severityItems || severityItems.length === 0) continue;
 
     for (const item of severityItems) {

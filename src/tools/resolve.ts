@@ -17,56 +17,6 @@ export const ResolveInputSchema = z.object({
 });
 
 /**
- * Resolve a review thread
- */
-export async function prResolve(
-  input: ResolveInput,
-  client: GitHubClient
-): Promise<ResolveOutput> {
-  const validated = ResolveInputSchema.parse(input);
-  const { owner, repo, threadId } = validated;
-
-  // Find the thread to get PR number and verify it exists
-  // We need to search for the thread - this is a limitation of the API
-  // For now, we'll trust the threadId is valid and attempt the mutation
-
-  // Attempt to resolve
-  const clientMutationId = `resolve-${threadId}-${Date.now()}`;
-
-  try {
-    await client.graphql<ResolveThreadData>(QUERIES.resolveThread, {
-      threadId,
-      clientMutationId
-    });
-
-    return {
-      success: true,
-      threadId,
-      file: 'unknown', // We don't have this info without fetching
-      title: 'Thread resolved'
-    };
-  } catch (e) {
-    if (e instanceof StructuredError) {
-      // Already resolved is still success
-      if (e.message.includes('already resolved')) {
-        return {
-          success: true,
-          threadId,
-          file: 'unknown',
-          title: 'Thread was already resolved'
-        };
-      }
-      throw e;
-    }
-    throw new StructuredError(
-      'network',
-      `Failed to resolve thread: ${e instanceof Error ? e.message : String(e)}`,
-      true
-    );
-  }
-}
-
-/**
  * Resolve with context (fetches thread info first)
  * Supports both review threads and Qodo issues
  */

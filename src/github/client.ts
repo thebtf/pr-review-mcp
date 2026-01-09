@@ -63,9 +63,9 @@ class CircuitBreaker {
       } else {
         throw new StructuredError(
           'circuit_open',
-          'gh CLI unavailable - circuit breaker open',
+          'GitHub API unavailable - circuit breaker open',
           true,
-          'Wait 60 seconds or check gh CLI status'
+          'Wait 60 seconds before retrying'
         );
       }
     }
@@ -89,7 +89,7 @@ class CircuitBreaker {
           'auth',
           'Authentication failed',
           false,
-          'Run: gh auth login'
+          'Check GITHUB_PERSONAL_ACCESS_TOKEN environment variable'
         );
       }
 
@@ -109,44 +109,7 @@ class CircuitBreaker {
   }
 }
 
-// ============================================================================
-// Rate Limit Manager
-// ============================================================================
-
-class RateLimitManager {
-  /**
-   * Execute with exponential backoff on rate limit errors.
-   * Uses reactive approach: retry on 429 errors with jitter.
-   * Note: gh CLI doesn't expose rate limit headers, so proactive
-   * rate limit tracking is not implemented.
-   */
-  async executeWithBackoff<T>(fn: () => Promise<T>, attempt = 0): Promise<T> {
-    try {
-      return await fn();
-    } catch (e) {
-      if (e instanceof Error &&
-          (e.message.includes('429') || e.message.includes('rate limit'))) {
-        // Rate limit - backoff with jitter, max 3 retries
-        if (attempt >= 3) {
-          throw new StructuredError(
-            'rate_limit',
-            'Rate limit exceeded after 3 retries',
-            true,
-            'Wait a few minutes and try again'
-          );
-        }
-        const jitter = Math.random() * 10000;
-        await this.sleep(60000 + jitter);
-        return this.executeWithBackoff(fn, attempt + 1);
-      }
-      throw e;
-    }
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-}
+// Rate limiting is handled by @octokit/plugin-throttling in octokit.ts
 
 // ============================================================================
 // GitHub Client
@@ -154,7 +117,6 @@ class RateLimitManager {
 
 export class GitHubClient {
   private circuitBreaker = new CircuitBreaker();
-  private rateLimiter = new RateLimitManager();
 
   /**
    * Check prerequisites (GITHUB_PERSONAL_ACCESS_TOKEN set)
@@ -172,12 +134,11 @@ export class GitHubClient {
 
   /**
    * Execute GraphQL query via Octokit
+   * Rate limiting handled by @octokit/plugin-throttling
    */
   async graphql<T>(query: string, variables: GraphQLVariables = {}): Promise<T> {
     return this.circuitBreaker.execute(() =>
-      this.rateLimiter.executeWithBackoff(() =>
-        this.executeGraphQL<T>(query, variables)
-      )
+      this.executeGraphQL<T>(query, variables)
     );
   }
 
