@@ -26,7 +26,7 @@ class MCPTestClient {
 
   async start() {
     // Spawn server
-    this.serverProcess = spawn('node', ['dist/server.js'], {
+    this.serverProcess = spawn('node', ['dist/index.js'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: process.cwd()
     });
