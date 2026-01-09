@@ -29,14 +29,41 @@
    - Parses focus areas → MAJOR severity
    - Integrated into `pr_list` and `pr_summary`
 
+5. **Test Client** — `scripts/mcp-test-client.mjs`:
+   - Interactive and quick-call modes
+   - Correct MCP protocol (newline-delimited JSON)
+
 ### What's In Progress
 
 **Qodo Integration Testing:**
 - Adapter code written but NOT tested via MCP protocol
-- Need to run `mcp-test.mjs` to verify Qodo comments appear
 - Build passes (`npm run build`)
 
-### Test PR
+---
+
+## Next Steps
+
+1. **Test Qodo Integration**
+   ```bash
+   # Quick test
+   node scripts/mcp-test-client.mjs pr_summary 2
+
+   # Interactive
+   node scripts/mcp-test-client.mjs
+   mcp> summary 2
+   mcp> list 2 false
+   ```
+   Should show Qodo comments in results
+
+2. **Fix Qodo File Paths** (if needed)
+   - Currently may store GitHub diff URL instead of file path
+   - Need to extract file name from code snippets or surrounding context
+
+3. **Test pr_invoke** on real agents
+
+---
+
+## Test PR
 
 `thebtf/pr-review-mcp#2` — 72+ comments from 6 agents:
 - CodeRabbit: 22
@@ -45,26 +72,6 @@
 - Sourcery: 9
 - Codex: 2
 - Qodo: 4 (1 security + 3 focus areas) — **needs verification**
-
----
-
-## Next Steps
-
-1. **Test Qodo Integration**
-   ```bash
-   node mcp-test.mjs
-   ```
-   Should show Qodo comments in `pr_list` and `pr_summary`
-
-2. **Fix Qodo File Paths**
-   - Currently stores GitHub diff URL instead of file path
-   - Need to extract file name from code snippets or surrounding context
-
-3. **Commit Changes**
-   - New files: `src/adapters/qodo.ts`
-   - Modified: `src/tools/list.ts`, `src/tools/summary.ts`, `src/github/types.ts`
-
-4. **Update PR #2** — push changes, re-run stress test
 
 ---
 
@@ -79,25 +86,24 @@
 
 ---
 
-## Files Changed Since Last Commit
+## Test Client Usage
 
-```
-src/adapters/qodo.ts          # NEW - Qodo adapter
-src/tools/list.ts             # Modified - Qodo integration
-src/tools/summary.ts          # Modified - Qodo integration  
-src/github/types.ts           # Modified - added 'qodo' to CommentSource
-src/server.ts                 # Modified - prompt argument description
-.agent/                       # NEW - agent infrastructure
-CLAUDE.md                     # NEW
-AGENTS.md                     # NEW
-.gitignore                    # Modified
+```bash
+# Interactive mode
+node scripts/mcp-test-client.mjs
+
+# Quick calls
+node scripts/mcp-test-client.mjs pr_summary 2
+node scripts/mcp-test-client.mjs pr_list 2 false  # unresolved only
+node scripts/mcp-test-client.mjs pr_get 2 <id>
+node scripts/mcp-test-client.mjs pr_invoke 2 coderabbit
 ```
 
 ---
 
 ## Debugging Notes
 
-- **MCP Protocol**: Use `spawn('node', ['dist/index.js'])` + newline JSON
+- **MCP Protocol**: Use newline-delimited JSON, NOT Content-Length framing
 - **Qodo Detection**: Look for `qodo-code-review[bot]` in issue comments
 - **Qodo Marker**: `## PR Reviewer Guide 🔍`
 - **Windows**: `MSYS_NO_PATHCONV=1` for `/review` command
