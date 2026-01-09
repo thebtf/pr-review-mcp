@@ -19,7 +19,7 @@ import {
   Prompt,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { ZodError } from 'zod';
+import { z, ZodError } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
 import { prSummary, SummaryInputSchema } from './tools/summary.js';
 import { prList, ListInputSchema } from './tools/list.js';
@@ -32,6 +32,15 @@ import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
+import {
+  prClaimWork,
+  prReportProgress,
+  prGetWorkStatus,
+  ClaimWorkSchema,
+  ReportProgressSchema,
+  GetWorkStatusSchema
+} from './tools/coordination.js';
+import { getInvokableAgentIds } from './agents/registry.js';
 
 // ============================================================================
 // Workflow Prompt
@@ -286,7 +295,7 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' },
                 agent: {
                   type: 'string',
-                  enum: ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'all'],
+                  enum: [...getInvokableAgentIds(), 'all'],
                   description: 'Agent to invoke, or "all" for configured agents from .github/pr-review.json'
                 },
                 options: {
@@ -317,8 +326,8 @@ export class PRReviewMCPServer {
                 since: { type: 'string', description: 'ISO timestamp to poll from (omit for all)' },
                 include: {
                   type: 'array',
-                  items: { type: 'string', enum: ['comments', 'reviews', 'commits', 'status'] },
-                  description: 'Update types to include (default: all)'
+                  items: { type: 'string', enum: ['comments', 'reviews', 'commits', 'status', 'agents'] },
+                  description: 'Update types to include (default: all except agents). Use "agents" to get AI reviewer completion status.'
                 }
               },
               required: ['owner', 'repo', 'pr']
@@ -356,12 +365,12 @@ export class PRReviewMCPServer {
                 reviewers: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: 'GitHub usernames'
+                  description: 'GitHub usernames to request/remove as reviewers (at least one of reviewers or team_reviewers required)'
                 },
                 team_reviewers: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: 'Team slugs'
+                  description: 'Team slugs to request/remove as reviewers (at least one of reviewers or team_reviewers required)'
                 }
               },
               required: ['owner', 'repo', 'pr', 'action']
@@ -401,108 +410,124 @@ export class PRReviewMCPServer {
               },
               required: ['owner', 'repo', 'pr', 'confirm']
             }
+          },
+          {
+            name: 'pr_claim_work',
+            description: 'Claim file partition for parallel PR review processing',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                agent_id: { type: 'string', description: 'Unique identifier for the claiming agent' },
+                run_id: { type: 'string', description: 'Optional run ID (auto-created if not provided)' },
+                pr_info: {
+                  type: 'object',
+                  properties: {
+                    owner: { type: 'string', description: 'Repository owner' },
+                    repo: { type: 'string', description: 'Repository name' },
+                    pr: { type: 'number', description: 'Pull request number' }
+                  },
+                  required: ['owner', 'repo', 'pr'],
+                  description: 'PR info (required if no active run)'
+                }
+              },
+              required: ['agent_id']
+            }
+          },
+          {
+            name: 'pr_report_progress',
+            description: 'Report completion status for a claimed file partition',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                agent_id: { type: 'string', description: 'Agent ID that claimed the partition' },
+                file: { type: 'string', description: 'File path being reported on' },
+                status: { type: 'string', enum: ['done', 'failed', 'skipped'], description: 'Completion status' },
+                result: {
+                  type: 'object',
+                  properties: {
+                    commentsProcessed: { type: 'number', description: 'Number of comments processed' },
+                    commentsResolved: { type: 'number', description: 'Number of comments resolved' },
+                    errors: { type: 'array', items: { type: 'string' }, description: 'Any errors encountered' }
+                  }
+                }
+              },
+              required: ['agent_id', 'file', 'status']
+            }
+          },
+          {
+            name: 'pr_get_work_status',
+            description: 'Get current coordination run status and progress',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
+              },
+              required: []
+            }
           }
         ] as Tool[]
       };
     });
+
+    // Helper to create tool handler with schema validation and unified error handling
+    const createToolHandler = <T extends z.ZodTypeAny>(
+      schema: T,
+      handler: (input: z.infer<T>, client: GitHubClient) => Promise<any>
+    ): ToolHandler => {
+      return async (args, client) => {
+        if (!client) {
+          throw new Error('GitHubClient is required for this handler');
+        }
+        const validated = schema.parse(args);
+        return handler(validated, client);
+      };
+    };
+
+    // Helper for handlers that don't need client
+    const createSimpleHandler = <T extends z.ZodTypeAny>(
+      schema: T,
+      handler: (input: z.infer<T>) => Promise<any>
+    ): ToolHandler => {
+      return async (args) => {
+        const validated = schema.parse(args);
+        return handler(validated);
+      };
+    };
+
+    // Tool handler map for better maintainability and scalability
+    type ToolHandler = (args: any, client?: GitHubClient) => Promise<any>;
+
+    const toolHandlers: Record<string, ToolHandler> = {
+      'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
+      'pr_list': createToolHandler(ListInputSchema, prList),
+      'pr_get': createToolHandler(GetInputSchema, prGet),
+      'pr_resolve': createToolHandler(ResolveInputSchema, prResolveWithContext),
+      'pr_changes': createToolHandler(ChangesInputSchema, prChanges),
+      'pr_invoke': createSimpleHandler(InvokeInputSchema, prInvoke),
+      'pr_poll_updates': createToolHandler(PollInputSchema, prPollUpdates),
+      'pr_labels': createSimpleHandler(LabelsInputSchema, prLabels),
+      'pr_reviewers': createSimpleHandler(ReviewersInputSchema, prReviewers),
+      'pr_create': createSimpleHandler(CreateInputSchema, prCreate),
+      'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
+      'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
+      'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
+      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus)
+    };
 
     // Handle tool calls
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
       try {
-        switch (name) {
-          case 'pr_summary': {
-            const input = SummaryInputSchema.parse(args);
-            const result = await prSummary(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_list': {
-            const input = ListInputSchema.parse(args);
-            const result = await prList(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_get': {
-            const input = GetInputSchema.parse(args);
-            const result = await prGet(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_resolve': {
-            const input = ResolveInputSchema.parse(args);
-            const result = await prResolveWithContext(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_changes': {
-            const input = ChangesInputSchema.parse(args);
-            const result = await prChanges(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_invoke': {
-            const input = InvokeInputSchema.parse(args);
-            const result = await prInvoke(input);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_poll_updates': {
-            const input = PollInputSchema.parse(args);
-            const result = await prPollUpdates(input, this.githubClient);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_labels': {
-            const input = LabelsInputSchema.parse(args);
-            const result = await prLabels(input);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_reviewers': {
-            const input = ReviewersInputSchema.parse(args);
-            const result = await prReviewers(input);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_create': {
-            const input = CreateInputSchema.parse(args);
-            const result = await prCreate(input);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          case 'pr_merge': {
-            const input = MergeInputSchema.parse(args);
-            const result = await prMerge(input);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
-          }
-
-          default:
-            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        const handler = toolHandlers[name];
+        if (!handler) {
+          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
+
+        const result = await handler(args, this.githubClient);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+        };
       } catch (error) {
         if (error instanceof ZodError) {
           throw new McpError(ErrorCode.InvalidRequest, `Validation error: ${error.message}`);
@@ -513,8 +538,18 @@ export class PRReviewMCPServer {
         }
 
         if (error instanceof StructuredError) {
+          // Map StructuredError kinds to appropriate MCP error codes
+          const errorCodeMap: Record<string, ErrorCode> = {
+            'auth': ErrorCode.InvalidRequest,
+            'permission': ErrorCode.InvalidRequest,
+            'not_found': ErrorCode.InvalidRequest,
+            'parse': ErrorCode.InvalidRequest,
+            'rate_limit': ErrorCode.InternalError,
+            'network': ErrorCode.InternalError,
+            'circuit_open': ErrorCode.InternalError
+          };
           throw new McpError(
-            error.kind === 'not_found' ? ErrorCode.InvalidRequest : ErrorCode.InternalError,
+            errorCodeMap[error.kind] ?? ErrorCode.InternalError,
             error.message
           );
         }

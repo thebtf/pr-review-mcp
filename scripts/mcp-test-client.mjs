@@ -13,8 +13,8 @@
 import { spawn } from 'child_process';
 import * as readline from 'readline';
 
-const OWNER = 'thebtf';
-const REPO = 'pr-review-mcp';
+const OWNER = process.env.MCP_TEST_OWNER || 'thebtf';
+const REPO = process.env.MCP_TEST_REPO || 'pr-review-mcp';
 
 class MCPTestClient {
   constructor() {
@@ -43,12 +43,18 @@ class MCPTestClient {
       if (!line.trim()) return;
       try {
         const response = JSON.parse(line);
+        if (typeof response !== 'object' || response === null) {
+          console.error('[invalid response]', line);
+          return;
+        }
+        if (!('id' in response)) {
+          console.log('[notification]', JSON.stringify(response, null, 2));
+          return;
+        }
         const pending = this.pendingRequests.get(response.id);
         if (pending) {
           pending.resolve(response);
           this.pendingRequests.delete(response.id);
-        } else {
-          console.log('[notification]', JSON.stringify(response, null, 2));
         }
       } catch (e) {
         console.error('[parse error]', line);
@@ -60,8 +66,9 @@ class MCPTestClient {
       process.exit(code || 0);
     });
 
-    // Wait for server to start
-    await new Promise(r => setTimeout(r, 500));
+    // Wait for server to start (configurable via env)
+    const startupDelay = parseInt(process.env.MCP_STARTUP_DELAY || '500', 10);
+    await new Promise(r => setTimeout(r, startupDelay));
 
     // Initialize
     const initResult = await this.send('initialize', {
@@ -133,7 +140,11 @@ const TOOLS = {
   pr_resolve: (pr, threadId) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), threadId }),
   pr_changes: (pr, cursor) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), cursor }),
   pr_invoke: (pr, agent) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), agent: agent || 'all' }),
-  pr_poll_updates: (pr, since) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), since }),
+  pr_poll_updates: (pr, since, includeAgents) => ({
+    owner: OWNER, repo: REPO, pr: parseInt(pr),
+    since: since && since !== 'null' && since !== 'undefined' ? since : undefined,
+    include: includeAgents === 'agents' ? ['agents'] : undefined
+  }),
   pr_labels: (pr, action, ...labels) => ({
     owner: OWNER, repo: REPO, pr: parseInt(pr), action, labels
   }),
@@ -145,8 +156,46 @@ const TOOLS = {
   }),
   pr_merge: (pr, method) => ({
     owner: OWNER, repo: REPO, pr: parseInt(pr), method: method || 'squash', confirm: true
-  })
+  }),
+  pr_review_cycle: (pr, action, mode) => ({
+    owner: OWNER, repo: REPO, pr: parseInt(pr), action: action || 'status',
+    ...(mode && { mode })
+  }),
+  pr_claim_work: (agentId, runId, prInfoJson) => {
+    const args = { agent_id: agentId };
+    if (runId && runId !== 'null') args.run_id = runId;
+    if (prInfoJson && prInfoJson !== 'null') {
+      try { args.pr_info = JSON.parse(prInfoJson); } catch {}
+    }
+    return args;
+  },
+  pr_report_progress: (agentId, file, status, resultJson) => {
+    const args = { agent_id: agentId, file, status };
+    if (resultJson && resultJson !== 'null') {
+      try { args.result = JSON.parse(resultJson); } catch {}
+    }
+    return args;
+  },
+  pr_get_work_status: (runId) => {
+    const args = {};
+    if (runId && runId !== 'null') args.run_id = runId;
+    return args;
+  }
 };
+
+// Helper to safely extract result text
+function extractResultText(result) {
+  if (!result?.content?.[0]?.text) {
+    throw new Error('Invalid result structure: missing content[0].text');
+  }
+  try {
+    return JSON.parse(result.content[0].text);
+  } catch (e) {
+    // If not valid JSON, return as-is (handles text responses and errors)
+    console.log('[non-JSON response detected, displaying as text]');
+    return result.content[0].text;
+  }
+}
 
 async function interactive(client) {
   const rl = readline.createInterface({
@@ -181,32 +230,41 @@ async function interactive(client) {
         }
         case 'summary': {
           const result = await client.callTool('pr_summary', TOOLS.pr_summary(parts[1] || 2));
-          console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+          console.log(JSON.stringify(extractResultText(result), null, 2));
           break;
         }
         case 'list': {
           const result = await client.callTool('pr_list', TOOLS.pr_list(parts[1] || 2, parts[2]));
-          console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+          console.log(JSON.stringify(extractResultText(result), null, 2));
           break;
         }
         case 'get': {
           const result = await client.callTool('pr_get', TOOLS.pr_get(parts[1], parts[2]));
-          console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+          console.log(JSON.stringify(extractResultText(result), null, 2));
           break;
         }
         case 'resolve': {
           const result = await client.callTool('pr_resolve', TOOLS.pr_resolve(parts[1], parts[2]));
-          console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+          console.log(JSON.stringify(extractResultText(result), null, 2));
           break;
         }
         case 'invoke': {
           const result = await client.callTool('pr_invoke', TOOLS.pr_invoke(parts[1] || 2, parts[2]));
-          console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+          console.log(JSON.stringify(extractResultText(result), null, 2));
           break;
         }
         case 'raw': {
           const method = parts[1];
-          const params = JSON.parse(parts.slice(2).join(' ') || '{}');
+          let params = {};
+          const paramsStr = parts.slice(2).join(' ');
+          if (paramsStr) {
+            try {
+              params = JSON.parse(paramsStr);
+            } catch (e) {
+              console.error('Error: Invalid JSON parameters:', e.message);
+              break;
+            }
+          }
           const result = await client.send(method, params);
           console.log(JSON.stringify(result, null, 2));
           break;
@@ -236,15 +294,29 @@ async function interactive(client) {
 }
 
 async function quickCall(client, tool, args) {
-  const toolArgs = TOOLS[tool]?.(...args);
-  if (!toolArgs) {
+  const toolFn = TOOLS[tool];
+  if (!toolFn) {
     console.error(`Unknown tool: ${tool}`);
     console.log('Available:', Object.keys(TOOLS).join(', '));
     process.exit(1);
   }
 
+  // Check minimum required arguments
+  const minArgs = {
+    pr_summary: 1, pr_list: 1, pr_get: 2, pr_resolve: 2, pr_changes: 1,
+    pr_invoke: 1, pr_poll_updates: 1, pr_labels: 3, pr_reviewers: 3,
+    pr_create: 1, pr_merge: 1, pr_review_cycle: 1,
+    pr_claim_work: 1, pr_report_progress: 3, pr_get_work_status: 0
+  };
+  const required = minArgs[tool] || 0;
+  if (args.length < required) {
+    console.error(`Error: ${tool} requires at least ${required} argument(s), got ${args.length}`);
+    process.exit(1);
+  }
+
+  const toolArgs = toolFn(...args);
   const result = await client.callTool(tool, toolArgs);
-  console.log(JSON.stringify(JSON.parse(result.content[0].text), null, 2));
+  console.log(JSON.stringify(extractResultText(result), null, 2));
   client.close();
 }
 
