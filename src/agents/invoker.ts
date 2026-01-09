@@ -2,7 +2,7 @@
  * Agent Invoker - Logic for invoking AI code review agents
  */
 
-import { spawnSync } from 'child_process';
+import { getOctokit } from '../github/octokit.js';
 import { StructuredError } from '../github/client.js';
 import { AgentConfig, getAgentConfig, getInvokableAgentIds, InvokableAgentId } from './registry.js';
 
@@ -65,43 +65,34 @@ export async function postInvocationComment(
   command: string,
   config: AgentConfig
 ): Promise<InvokeResult> {
-  const args = [
-    'pr', 'comment', String(pr),
-    '--repo', `${owner}/${repo}`,
-    '--body', command
-  ];
-
-  // Apply MSYS workaround for slash commands on Windows
-  const env = config.msysWorkaround && process.platform === 'win32'
-    ? { ...process.env, MSYS_NO_PATHCONV: '1' }
-    : process.env;
-
   try {
-    const result = spawnSync('gh', args, {
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-      env
+    const octokit = getOctokit();
+    const { data } = await octokit.issues.createComment({
+      owner,
+      repo,
+      issue_number: pr,
+      body: command
     });
 
-    if (result.error) {
-      return {
-        success: false,
-        agent: config.name.toLowerCase(),
-        agentName: config.name,
-        commentUrl: null,
-        message: `Failed to execute gh CLI: ${result.error.message}`
-      };
-    }
+    return {
+      success: true,
+      agent: config.name.toLowerCase(),
+      agentName: config.name,
+      commentUrl: data.html_url,
+      message: `Successfully invoked ${config.name}. ` +
+        `Note: This tool cannot verify that the ${config.name} GitHub App is installed. ` +
+        `If no review appears, check the repository's GitHub Apps settings.`
+    };
+  } catch (e) {
+    // Handle specific HTTP errors
+    if (e && typeof e === 'object' && 'status' in e) {
+      const status = (e as { status: number }).status;
+      const message = (e as { message?: string }).message || 'Unknown error';
 
-    if (result.status !== 0) {
-      const stderr = result.stderr || '';
-
-      // Parse common errors
-      if (stderr.includes('401') || stderr.includes('Bad credentials')) {
-        throw new StructuredError('auth', 'Authentication failed', false, 'Run: gh auth login');
+      if (status === 401) {
+        throw new StructuredError('auth', 'Authentication failed', false, 'Check GITHUB_PERSONAL_ACCESS_TOKEN');
       }
-      if (stderr.includes('404')) {
+      if (status === 404) {
         return {
           success: false,
           agent: config.name.toLowerCase(),
@@ -116,25 +107,10 @@ export async function postInvocationComment(
         agent: config.name.toLowerCase(),
         agentName: config.name,
         commentUrl: null,
-        message: `gh CLI error: ${stderr.slice(0, 200)}`
+        message: `GitHub API error (${status}): ${message.slice(0, 200)}`
       };
     }
 
-    // Parse comment URL from stdout (gh pr comment outputs the URL)
-    const stdout = result.stdout.trim();
-    const urlMatch = stdout.match(/https:\/\/github\.com\/[^\s]+/);
-    const commentUrl = urlMatch ? urlMatch[0] : null;
-
-    return {
-      success: true,
-      agent: config.name.toLowerCase(),
-      agentName: config.name,
-      commentUrl,
-      message: `Successfully invoked ${config.name}. ` +
-        `Note: This tool cannot verify that the ${config.name} GitHub App is installed. ` +
-        `If no review appears, check the repository's GitHub Apps settings.`
-    };
-  } catch (e) {
     if (e instanceof StructuredError) throw e;
 
     return {

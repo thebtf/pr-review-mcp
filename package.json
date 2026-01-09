@@ -35,6 +35,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@octokit/graphql": "^9.0.3",
+    "@octokit/plugin-retry": "^8.0.3",
+    "@octokit/plugin-throttling": "^11.0.3",
+    "@octokit/rest": "^22.0.1",
     "zod": "^3.22.0"
   },
   "devDependencies": {

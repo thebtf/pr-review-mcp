@@ -1,12 +1,12 @@
 /**
  * Qodo Adapter - Parses Qodo's persistent issue comment format
- * 
+ *
  * Qodo posts a single "persistent review" as an issue comment (not inline review)
  * and updates it on each commit. This adapter fetches and parses that comment.
  */
 
-import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
+import { getOctokit } from '../github/octokit.js';
 
 export interface QodoComment {
   id: string;
@@ -44,26 +44,21 @@ async function fetchPRFilesMap(
   repo: string,
   pr: number
 ): Promise<Map<string, string>> {
-  const result = spawnSync('gh', [
-    'api',
-    `repos/${owner}/${repo}/pulls/${pr}/files`,
-    '--jq', '.[].filename'
-  ], {
-    encoding: 'utf-8',
-    maxBuffer: 5 * 1024 * 1024,
-    windowsHide: true
-  });
-
   const fileMap = new Map<string, string>();
 
-  if (result.status !== 0 || !result.stdout.trim()) {
-    return fileMap;
-  }
+  try {
+    const octokit = getOctokit();
+    const files = await octokit.paginate(
+      octokit.pulls.listFiles,
+      { owner, repo, pull_number: pr, per_page: 100 }
+    );
 
-  const files = result.stdout.trim().split('\n');
-  for (const file of files) {
-    const hash = createHash('sha256').update(file).digest('hex');
-    fileMap.set(hash, file);
+    for (const file of files) {
+      const hash = createHash('sha256').update(file.filename).digest('hex');
+      fileMap.set(hash, file.filename);
+    }
+  } catch {
+    // Return empty map on error
   }
 
   return fileMap;
@@ -110,33 +105,26 @@ async function fetchQodoComment(
   repo: string,
   pr: number
 ): Promise<{ id: number; html_url: string; updated_at: string; body: string } | null> {
-  const result = spawnSync('gh', [
-    'api',
-    `repos/${owner}/${repo}/issues/${pr}/comments`,
-    '--jq', `.[] | select(.user.login == "${QODO_BOT}") | select(.body | contains("${MARKER}"))`
-  ], {
-    encoding: 'utf-8',
-    maxBuffer: 5 * 1024 * 1024,
-    windowsHide: true
-  });
+  try {
+    const octokit = getOctokit();
+    const comments = await octokit.paginate(
+      octokit.issues.listComments,
+      { owner, repo, issue_number: pr, per_page: 100 }
+    );
 
-  if (result.status !== 0 || !result.stdout.trim()) {
-    return null;
-  }
-
-  // Parse JSON (gh api with jq returns newline-separated JSON objects)
-  const lines = result.stdout.trim().split('\n');
-
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line);
-      // Take the first (and should be only) persistent review
-      if (parsed.body?.includes(MARKER)) {
-        return parsed;
+    // Find Qodo's persistent review comment
+    for (const comment of comments) {
+      if (comment.user?.login === QODO_BOT && comment.body?.includes(MARKER)) {
+        return {
+          id: comment.id,
+          html_url: comment.html_url,
+          updated_at: comment.updated_at,
+          body: comment.body
+        };
       }
-    } catch {
-      continue;
     }
+  } catch {
+    // Return null on error
   }
 
   return null;

@@ -1,15 +1,18 @@
 # PR Review MCP
 
-MCP server for PR review processing with GraphQL-based GitHub integration.
+MCP server for PR review processing with native Octokit GitHub integration.
 
 ## Features
 
 - **Zero Comments Missed** - Cursor pagination fetches all comments
 - **Compact Output** - ~2KB per list call instead of 100K+
+- **Multi-Agent Support** - CodeRabbit, Gemini, Copilot, Sourcery, Qodo, Codex
 - **4-Layer AI Extraction** - High-confidence prompt detection from CodeRabbit comments
 - **Native Thread Resolution** - GraphQL mutation (not REST workaround)
-- **Circuit Breaker** - Resilient to API failures
-- **Workflow Prompt** - Automated 7-step review processing
+- **Qodo Tracker** - Checkbox-based resolution for Qodo's persistent comments
+- **Agent Invocation** - Trigger AI reviewers via `pr_invoke`
+- **Circuit Breaker** - Resilient to API failures with auto-retry
+- **Rate Limit Handling** - Built-in throttling via @octokit plugins
 
 ## Installation
 
@@ -39,11 +42,19 @@ npm link
 ## Prerequisites
 
 - Node.js 18+
-- GitHub CLI (`gh`) installed and authenticated: `gh auth login`
+- GitHub Personal Access Token with `repo` scope
 
 ## Configuration
 
-Add to Claude Desktop config:
+### Environment Variable
+
+Set your GitHub token:
+
+```bash
+export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxxxxxx
+```
+
+### Claude Desktop Config
 
 | Platform | Config Path |
 |----------|-------------|
@@ -58,7 +69,10 @@ For local development:
   "mcpServers": {
     "pr-review": {
       "command": "node",
-      "args": ["/path/to/pr-review-mcp/dist/index.js"]
+      "args": ["/path/to/pr-review-mcp/dist/index.js"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+      }
     }
   }
 }
@@ -71,7 +85,10 @@ After npm publish:
   "mcpServers": {
     "pr-review": {
       "command": "npx",
-      "args": ["pr-review-mcp"]
+      "args": ["pr-review-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+      }
     }
   }
 }
@@ -145,6 +162,21 @@ Incremental fetch since cursor.
   "cursor": "Y3Vyc29yOjE0..."
 }
 ```
+
+### `pr_invoke`
+
+Invoke AI code review agents.
+
+```json
+{
+  "owner": "thebtf",
+  "repo": "novascript",
+  "pr": 99,
+  "agents": ["coderabbit", "sourcery", "qodo"]
+}
+```
+
+Supported agents: `coderabbit`, `sourcery`, `qodo`
 
 ## Workflow Prompt
 

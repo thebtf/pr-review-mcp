@@ -1,10 +1,11 @@
 /**
- * GitHub Client - gh CLI wrapper with circuit breaker and rate limiting
- * Ported from coderabbit-processor.js lib/github-client.js
+ * GitHub Client - Octokit-based with circuit breaker
+ * Migrated from gh CLI wrapper to @octokit/graphql
  */
 
-import { spawnSync, execSync } from 'child_process';
 import { randomUUID } from 'crypto';
+import { getGraphQL } from './octokit.js';
+import { GraphqlResponseError } from '@octokit/graphql';
 import type { GraphQLVariables, GraphQLResponse, GraphQLError } from './types.js';
 
 // ============================================================================
@@ -156,36 +157,21 @@ export class GitHubClient {
   private rateLimiter = new RateLimitManager();
 
   /**
-   * Check prerequisites (gh CLI installed and authenticated)
+   * Check prerequisites (GITHUB_PERSONAL_ACCESS_TOKEN set)
    */
   checkPrerequisites(): void {
-    // Check gh CLI installed
-    try {
-      execSync('gh --version', { stdio: 'pipe', encoding: 'utf-8' });
-    } catch {
-      throw new StructuredError(
-        'not_found',
-        'gh CLI not found',
-        false,
-        'Install from: https://cli.github.com'
-      );
-    }
-
-    // Check auth
-    try {
-      execSync('gh auth status', { stdio: 'pipe', encoding: 'utf-8' });
-    } catch {
+    if (!process.env.GITHUB_PERSONAL_ACCESS_TOKEN) {
       throw new StructuredError(
         'auth',
-        'Not authenticated with GitHub',
+        'GITHUB_PERSONAL_ACCESS_TOKEN not set',
         false,
-        'Run: gh auth login'
+        'Set GITHUB_PERSONAL_ACCESS_TOKEN environment variable'
       );
     }
   }
 
   /**
-   * Execute GraphQL query via gh CLI
+   * Execute GraphQL query via Octokit
    */
   async graphql<T>(query: string, variables: GraphQLVariables = {}): Promise<T> {
     return this.circuitBreaker.execute(() =>
@@ -196,94 +182,64 @@ export class GitHubClient {
   }
 
   /**
-   * Internal GraphQL execution
+   * Internal GraphQL execution via @octokit/graphql
    */
   private async executeGraphQL<T>(query: string, variables: GraphQLVariables): Promise<T> {
-    // Build command args
-    const args: string[] = ['api', 'graphql'];
-
-    // Add query
-    args.push('-f', `query=${query}`);
-
-    // Add variables
-    for (const [key, value] of Object.entries(variables)) {
-      if (value !== undefined && value !== null) {
-        // -F for non-string values (numbers, booleans), -f for strings
-        const type = typeof value !== 'string' ? '-F' : '-f';
-        args.push(type, `${key}=${value}`);
-      }
-    }
-
     try {
-      const result = spawnSync('gh', args, {
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-        windowsHide: true
-      });
-
-      if (result.error) {
-        throw new StructuredError(
-          'network',
-          `gh CLI error: ${result.error.message}`,
-          true
-        );
-      }
-
-      if (result.status !== 0) {
-        const stderr = result.stderr || '';
-
-        // Parse specific error types
-        if (stderr.includes('401') || stderr.includes('Bad credentials')) {
-          throw new StructuredError('auth', 'Authentication failed', false, 'Run: gh auth login');
-        }
-        if (stderr.includes('403') && stderr.includes('rate')) {
-          throw new StructuredError('rate_limit', 'Rate limit exceeded', true, 'Wait and retry');
-        }
-        if (stderr.includes('404')) {
-          throw new StructuredError('not_found', 'Resource not found', false);
-        }
-
-        throw new StructuredError(
-          'network',
-          `gh CLI failed: ${stderr.slice(0, 500)}`,
-          true
-        );
-      }
-
-      const data = JSON.parse(result.stdout) as GraphQLResponse<T>;
-
-      // Check for GraphQL errors
-      if (data.errors && data.errors.length > 0) {
-        const error = data.errors[0];
-
-        if (error.type === 'NOT_FOUND') {
-          throw new StructuredError('not_found', error.message, false);
-        }
-        if (error.type === 'FORBIDDEN') {
-          throw new StructuredError('permission', error.message, false);
-        }
-
-        // Return partial data if available
-        if (data.data) {
-          console.warn(`GraphQL warning: ${error.message}`);
-          return data.data;
-        }
-
-        throw new StructuredError('parse', `GraphQL error: ${error.message}`, false);
-      }
-
-      if (!data.data) {
-        throw new StructuredError('parse', 'No data in GraphQL response', false);
-      }
-
-      return data.data;
+      const graphqlClient = getGraphQL();
+      const response = await graphqlClient<T>(query, variables);
+      return response;
     } catch (e) {
       if (e instanceof StructuredError) throw e;
 
+      // Handle Octokit GraphQL errors
+      if (e instanceof GraphqlResponseError) {
+        const errors = e.errors || [];
+        if (errors.length > 0) {
+          const error = errors[0] as GraphQLError;
+
+          if (error.type === 'NOT_FOUND') {
+            throw new StructuredError('not_found', error.message, false);
+          }
+          if (error.type === 'FORBIDDEN') {
+            throw new StructuredError('permission', error.message, false);
+          }
+
+          // Check for partial data
+          if (e.data) {
+            console.warn(`GraphQL warning: ${error.message}`);
+            return e.data as T;
+          }
+
+          throw new StructuredError('parse', `GraphQL error: ${error.message}`, false);
+        }
+      }
+
+      // Handle HTTP errors from underlying request
+      if (e && typeof e === 'object' && 'status' in e) {
+        const status = (e as { status: number }).status;
+        const message = (e as { message?: string }).message || 'Unknown error';
+
+        if (status === 401) {
+          throw new StructuredError('auth', 'Authentication failed', false, 'Check GITHUB_PERSONAL_ACCESS_TOKEN');
+        }
+        if (status === 403) {
+          if (message.toLowerCase().includes('rate')) {
+            throw new StructuredError('rate_limit', 'Rate limit exceeded', true, 'Wait and retry');
+          }
+          throw new StructuredError('permission', message, false);
+        }
+        if (status === 404) {
+          throw new StructuredError('not_found', 'Resource not found', false);
+        }
+
+        throw new StructuredError('network', `GitHub API error (${status}): ${message}`, true);
+      }
+
       throw new StructuredError(
-        'parse',
-        `Failed to parse gh response: ${e instanceof Error ? e.message : String(e)}`,
-        false
+        'network',
+        `GitHub API error: ${e instanceof Error ? e.message : String(e)}`,
+        true
       );
     }
   }
