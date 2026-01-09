@@ -5,7 +5,7 @@
 
 export type Severity = 'CRIT' | 'MAJOR' | 'MINOR' | 'TRIVIAL' | 'ISSUE' | 'REFACTOR' | 'NITPICK' | 'DOCS' | 'N/A';
 export type IssueType = 'issue' | 'refactor' | 'nitpick' | 'docs' | 'other';
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'unknown';
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'unknown';
 
 export interface SeverityResult {
   severity: Severity;
