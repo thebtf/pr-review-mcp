@@ -148,7 +148,7 @@ export class PRReviewMCPServer {
               },
               {
                 name: 'pr',
-                description: 'Pull request number',
+                description: 'Pull request number (as string)',
                 required: true
               }
             ]
