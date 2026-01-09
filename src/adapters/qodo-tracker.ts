@@ -89,9 +89,7 @@ function generateTrackerBody(
   }
 
   // Use severity order from extractor (DRY)
-  const order = SEVERITY_ORDER;
-
-  for (const severity of order) {
+  for (const severity of SEVERITY_ORDER) {
     const severityItems = bySeverity.get(severity);
     if (!severityItems || severityItems.length === 0) continue;
 

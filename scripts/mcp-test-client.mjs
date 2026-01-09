@@ -144,7 +144,7 @@ const TOOLS = {
     owner: OWNER, repo: REPO, title: title || `PR from ${head}`, head, base: base || 'main'
   }),
   pr_merge: (pr, method) => ({
-    owner: OWNER, repo: REPO, pr: parseInt(pr), method: method || 'squash'
+    owner: OWNER, repo: REPO, pr: parseInt(pr), method: method || 'squash', confirm: true
   })
 };
 

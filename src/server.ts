@@ -386,7 +386,7 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_merge',
-            description: 'Merge a pull request (CAUTION: destructive operation)',
+            description: 'Merge a pull request (CAUTION: destructive operation, requires confirm=true)',
             inputSchema: {
               type: 'object',
               properties: {
@@ -396,9 +396,10 @@ export class PRReviewMCPServer {
                 method: { type: 'string', enum: ['merge', 'squash', 'rebase'], description: 'Merge method (default: squash)' },
                 commit_title: { type: 'string', description: 'Custom merge commit title' },
                 commit_message: { type: 'string', description: 'Custom merge commit message' },
-                delete_branch: { type: 'boolean', description: 'Delete head branch after merge (default: true)' }
+                delete_branch: { type: 'boolean', description: 'Delete head branch after merge (default: true)' },
+                confirm: { type: 'boolean', const: true, description: 'REQUIRED: Must be true to confirm merge (safety guard)' }
               },
-              required: ['owner', 'repo', 'pr']
+              required: ['owner', 'repo', 'pr', 'confirm']
             }
           }
         ] as Tool[]

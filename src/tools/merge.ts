@@ -22,7 +22,10 @@ export const MergeInputSchema = z.object({
   method: z.enum(['merge', 'squash', 'rebase']).default('squash'),
   commit_title: z.string().optional(),
   commit_message: z.string().optional(),
-  delete_branch: z.boolean().default(true)
+  delete_branch: z.boolean().default(true),
+  confirm: z.literal(true, {
+    errorMap: () => ({ message: 'Confirmation required: set confirm=true to merge (destructive operation)' })
+  })
 });
 
 export type MergeInput = z.infer<typeof MergeInputSchema>;
