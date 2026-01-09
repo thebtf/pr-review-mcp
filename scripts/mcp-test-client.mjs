@@ -165,14 +165,14 @@ const TOOLS = {
     const args = { agent_id: agentId };
     if (runId && runId !== 'null') args.run_id = runId;
     if (prInfoJson && prInfoJson !== 'null') {
-      try { args.pr_info = JSON.parse(prInfoJson); } catch {}
+      try { args.pr_info = JSON.parse(prInfoJson); } catch (e) { console.error(`[error] Invalid JSON for pr_info: ${e.message}`); }
     }
     return args;
   },
   pr_report_progress: (agentId, file, status, resultJson) => {
     const args = { agent_id: agentId, file, status };
     if (resultJson && resultJson !== 'null') {
-      try { args.result = JSON.parse(resultJson); } catch {}
+      try { args.result = JSON.parse(resultJson); } catch (e) { console.error(`[error] Invalid JSON for result: ${e.message}`); }
     }
     return args;
   },

@@ -57,29 +57,27 @@ async function initializeRun(
   });
 
   // 3. Group by file
-  const fileGroups = new Map<string, { comments: string[], severity: Severity }>();
+  const fileGroups = new Map<string, { comments: Set<string>, severity: Severity }>();
 
   for (const comment of comments) {
     if (!comment.file) continue;
 
-    const group = fileGroups.get(comment.file) || { comments: [], severity: 'N/A' };
-    
-    // Track unique thread IDs
-    if (!group.comments.includes(comment.threadId)) {
-      group.comments.push(comment.threadId);
-    }
-    
+    const group = fileGroups.get(comment.file) || { comments: new Set(), severity: 'N/A' };
+
+    // Track unique thread IDs (O(1) with Set vs O(N) with Array.includes)
+    group.comments.add(comment.threadId);
+
     // Update max severity for the file
     // Cast comment.severity to Severity because ProcessedComment defines it as string
     group.severity = maxSeverity(group.severity, comment.severity as Severity);
-    
+
     fileGroups.set(comment.file, group);
   }
 
   // 4. Create partitions
   const partitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
     file,
-    comments: data.comments,
+    comments: Array.from(data.comments),
     severity: data.severity,
     status: 'pending'
   }));
