@@ -80,10 +80,8 @@ class CircuitBreaker {
       this.lastFailure = Date.now();
 
       // Auth errors = immediate open (won't self-heal)
-      if (e instanceof Error &&
-          (e.message.includes('401') ||
-           e.message.includes('Bad credentials') ||
-           e.message.includes('not logged'))) {
+      // Check for 401 status from HTTP errors (StructuredError auth is handled in executeGraphQL)
+      if (e && typeof e === 'object' && 'status' in e && (e as { status: number }).status === 401) {
         this.state = 'open';
         throw new StructuredError(
           'auth',
@@ -91,6 +89,11 @@ class CircuitBreaker {
           false,
           'Check GITHUB_PERSONAL_ACCESS_TOKEN environment variable'
         );
+      }
+      // Also check for StructuredError auth type (already processed)
+      if (e instanceof StructuredError && e.kind === 'auth') {
+        this.state = 'open';
+        throw e;
       }
 
       // Open circuit after threshold failures

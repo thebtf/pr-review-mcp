@@ -380,17 +380,20 @@ export class PRReviewMCPServer {
   }
 
   async run(): Promise<void> {
-    // Check prerequisites
+    // Check prerequisites - exit early if not met
     try {
       this.githubClient.checkPrerequisites();
-      console.error('✅ GitHub CLI authenticated');
+      console.error('✅ GitHub token configured');
     } catch (e) {
       if (e instanceof StructuredError) {
-        console.error(`⚠️  ${e.message}`);
+        console.error(`❌ ${e.message}`);
         if (e.userAction) {
           console.error(`   Action: ${e.userAction}`);
         }
+      } else {
+        console.error(`❌ Prerequisite check failed: ${e instanceof Error ? e.message : String(e)}`);
       }
+      process.exit(1);
     }
 
     const transport = new StdioServerTransport();

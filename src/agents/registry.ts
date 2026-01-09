@@ -91,7 +91,8 @@ export function getInvokableAgentIds(): InvokableAgentId[] {
 
 /**
  * Check if an agent ID is valid and invokable
+ * Uses Object.hasOwn to avoid prototype chain issues
  */
 export function isInvokableAgent(agentId: string): agentId is InvokableAgentId {
-  return agentId in INVOKABLE_AGENTS;
+  return Object.hasOwn(INVOKABLE_AGENTS, agentId);
 }
