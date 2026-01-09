@@ -17,7 +17,7 @@ export interface AgentConfig {
   authorPattern: string | string[];
 }
 
-export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo';
+export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex';
 
 /**
  * Agents that can be manually invoked via pr_invoke
@@ -44,6 +44,20 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     supports: ['files'],
     msysWorkaround: true,
     authorPattern: 'qodo-code-review[bot]',
+  },
+  gemini: {
+    name: 'Gemini',
+    command: '@gemini-code-assist review',
+    type: 'mention',
+    supports: ['focus'],
+    authorPattern: 'gemini-code-assist',
+  },
+  codex: {
+    name: 'Codex',
+    command: '@codex review',
+    type: 'mention',
+    supports: [],
+    authorPattern: 'chatgpt-codex-connector',
   },
 };
 

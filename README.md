@@ -176,7 +176,7 @@ Invoke AI code review agents.
 }
 ```
 
-Supported agents: `coderabbit`, `sourcery`, `qodo`
+Supported agents: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`
 
 ## Workflow Prompt
 

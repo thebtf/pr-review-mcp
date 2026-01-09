@@ -272,7 +272,7 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_invoke',
-            description: 'Invoke AI code review agents (CodeRabbit, Sourcery, Qodo) on a PR',
+            description: 'Invoke AI code review agents on a PR',
             inputSchema: {
               type: 'object',
               properties: {
@@ -281,7 +281,7 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' },
                 agent: {
                   type: 'string',
-                  enum: ['coderabbit', 'sourcery', 'qodo', 'all'],
+                  enum: ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'all'],
                   description: 'Agent to invoke, or "all" for configured agents from .github/pr-review.json'
                 },
                 options: {
@@ -352,7 +352,7 @@ export class PRReviewMCPServer {
 
           case 'pr_invoke': {
             const input = args as unknown as InvokeInput;
-            const result = await prInvoke(input, this.githubClient);
+            const result = await prInvoke(input);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
             };

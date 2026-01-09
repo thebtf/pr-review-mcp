@@ -3,15 +3,13 @@
  */
 
 import { z } from 'zod';
-import { spawnSync } from 'child_process';
-import { GitHubClient } from '../github/client.js';
+import { getOctokit } from '../github/octokit.js';
 import {
   InvokableAgentId,
   getInvokableAgentIds,
   isInvokableAgent
 } from '../agents/registry.js';
 import {
-  invokeAgent,
   invokeMultipleAgents,
   aggregateResults,
   InvokeOptions,
@@ -26,7 +24,7 @@ export const InvokeInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive'),
-  agent: z.enum(['coderabbit', 'sourcery', 'qodo', 'all'])
+  agent: z.enum(['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'all'])
     .describe('Agent to invoke (or "all" for configured agents)'),
   options: z.object({
     focus: z.string().optional().describe('Review focus: security, performance, best-practices'),
@@ -58,32 +56,29 @@ interface RepoConfig {
 }
 
 /**
- * Get file content from repository via gh CLI
+ * Get file content from repository via Octokit
  */
 async function getFileContent(
   owner: string,
   repo: string,
   path: string
 ): Promise<string | null> {
-  const args = [
-    'api',
-    `repos/${owner}/${repo}/contents/${path}`,
-    '--jq', '.content'
-  ];
+  try {
+    const octokit = getOctokit();
+    const { data } = await octokit.repos.getContent({
+      owner,
+      repo,
+      path
+    });
 
-  const result = spawnSync('gh', args, {
-    encoding: 'utf-8',
-    maxBuffer: 1024 * 1024,
-    windowsHide: true
-  });
-
-  if (result.status !== 0 || !result.stdout) {
+    // Content is base64 encoded for files
+    if ('content' in data && data.content) {
+      return Buffer.from(data.content, 'base64').toString('utf-8');
+    }
+    return null;
+  } catch {
     return null;
   }
-
-  // Content is base64 encoded
-  const base64 = result.stdout.trim();
-  return Buffer.from(base64, 'base64').toString('utf-8');
 }
 
 /**
@@ -127,12 +122,10 @@ async function getConfiguredAgents(
  * Invoke AI code review agents on a PR
  *
  * @param input - Tool input (owner, repo, pr, agent, options)
- * @param client - GitHub client (for consistency with other tools, not used directly)
  * @returns Invocation results
  */
 export async function prInvoke(
-  input: InvokeInput,
-  client: GitHubClient
+  input: InvokeInput
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;
