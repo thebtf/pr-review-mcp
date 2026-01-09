@@ -469,6 +469,9 @@ export class PRReviewMCPServer {
       };
     });
 
+    // Type definition for tool handlers
+    type ToolHandler = (args: any, client?: GitHubClient) => Promise<any>;
+
     // Helper to create tool handler with schema validation and unified error handling
     const createToolHandler = <T extends z.ZodTypeAny>(
       schema: T,
@@ -495,7 +498,6 @@ export class PRReviewMCPServer {
     };
 
     // Tool handler map for better maintainability and scalability
-    type ToolHandler = (args: any, client?: GitHubClient) => Promise<any>;
 
     const toolHandlers: Record<string, ToolHandler> = {
       'pr_summary': createToolHandler(SummaryInputSchema, prSummary),

@@ -32,7 +32,7 @@ export interface FilePartition {
   file: string;
   comments: string[];
   severity: Severity;
-  status: 'pending' | 'claimed' | 'done' | 'failed';
+  status: 'pending' | 'claimed' | 'done' | 'failed' | 'skipped';
   claimedBy?: string;
   claimedAt?: string;
   result?: PartitionResult;

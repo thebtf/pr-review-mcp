@@ -127,7 +127,8 @@ class CoordinationStateManager {
       pending: 0,
       claimed: 0,
       done: 0,
-      failed: 0
+      failed: 0,
+      skipped: 0
     };
 
     for (const p of this.currentRun.partitions.values()) {

@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { stateManager } from '../coordination/state.js';
@@ -62,14 +61,20 @@ async function initializeRun(
   for (const comment of comments) {
     if (!comment.file) continue;
 
-    const group = fileGroups.get(comment.file) || { comments: new Set(), severity: 'N/A' };
+    const existingGroup = fileGroups.get(comment.file);
+    const group = existingGroup ?? {
+      comments: new Set<string>(),
+      // Initialize with the first comment's severity for this file
+      severity: comment.severity as Severity
+    };
 
     // Track unique thread IDs (O(1) with Set vs O(N) with Array.includes)
     group.comments.add(comment.threadId);
 
-    // Update max severity for the file
-    // Cast comment.severity to Severity because ProcessedComment defines it as string
-    group.severity = maxSeverity(group.severity, comment.severity as Severity);
+    // Update max severity for the file (only if we had an existing group)
+    if (existingGroup) {
+      group.severity = maxSeverity(group.severity, comment.severity as Severity);
+    }
 
     fileGroups.set(comment.file, group);
   }
@@ -83,10 +88,13 @@ async function initializeRun(
   }));
 
   // Sort partitions by severity (highest first)
+  // Unknown severities are placed at the end (lowest priority)
   partitions.sort((a, b) => {
     const i1 = SEVERITY_ORDER.indexOf(a.severity);
     const i2 = SEVERITY_ORDER.indexOf(b.severity);
-    return i1 - i2;
+    const idx1 = i1 === -1 ? SEVERITY_ORDER.length : i1;
+    const idx2 = i2 === -1 ? SEVERITY_ORDER.length : i2;
+    return idx1 - idx2;
   });
 
   // 5. Init run
@@ -115,7 +123,6 @@ export async function prClaimWork(
       );
     }
     await initializeRun(client, pr_info.owner, pr_info.repo, pr_info.pr);
-    currentRun = stateManager.getCurrentRun();
   } else if (pr_info) {
     // Verify pr_info matches current run if provided
     const curr = currentRun.prInfo;

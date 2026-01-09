@@ -165,14 +165,22 @@ const TOOLS = {
     const args = { agent_id: agentId };
     if (runId && runId !== 'null') args.run_id = runId;
     if (prInfoJson && prInfoJson !== 'null') {
-      try { args.pr_info = JSON.parse(prInfoJson); } catch (e) { console.error(`[error] Invalid JSON for pr_info: ${e.message}`); }
+      try {
+        args.pr_info = JSON.parse(prInfoJson);
+      } catch (e) {
+        throw new Error(`Invalid JSON for pr_info: ${e.message}`);
+      }
     }
     return args;
   },
   pr_report_progress: (agentId, file, status, resultJson) => {
     const args = { agent_id: agentId, file, status };
     if (resultJson && resultJson !== 'null') {
-      try { args.result = JSON.parse(resultJson); } catch (e) { console.error(`[error] Invalid JSON for result: ${e.message}`); }
+      try {
+        args.result = JSON.parse(resultJson);
+      } catch (e) {
+        throw new Error(`Invalid JSON for result: ${e.message}`);
+      }
     }
     return args;
   },
@@ -302,6 +310,8 @@ async function quickCall(client, tool, args) {
   }
 
   // Check minimum required arguments
+  // NOTE: Keep this map in sync with TOOLS function signatures above.
+  // When adding or modifying tools, update the corresponding entry here.
   const minArgs = {
     pr_summary: 1, pr_list: 1, pr_get: 2, pr_resolve: 2, pr_changes: 1,
     pr_invoke: 1, pr_poll_updates: 1, pr_labels: 3, pr_reviewers: 3,
