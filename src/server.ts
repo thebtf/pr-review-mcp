@@ -27,6 +27,11 @@ import { prGet, GetInputSchema } from './tools/get.js';
 import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
 import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
+import { prPollUpdates, PollInputSchema } from './tools/poll.js';
+import { prLabels, LabelsInputSchema } from './tools/labels.js';
+import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
+import { prCreate, CreateInputSchema } from './tools/create.js';
+import { prMerge, MergeInputSchema } from './tools/merge.js';
 
 // ============================================================================
 // Workflow Prompt
@@ -299,6 +304,102 @@ export class PRReviewMCPServer {
               },
               required: ['owner', 'repo', 'pr', 'agent']
             }
+          },
+          {
+            name: 'pr_poll_updates',
+            description: 'Poll for new review updates since a timestamp (comments, commits, status)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                pr: { type: 'number', description: 'Pull request number' },
+                since: { type: 'string', description: 'ISO timestamp to poll from (omit for all)' },
+                include: {
+                  type: 'array',
+                  items: { type: 'string', enum: ['comments', 'reviews', 'commits', 'status'] },
+                  description: 'Update types to include (default: all)'
+                }
+              },
+              required: ['owner', 'repo', 'pr']
+            }
+          },
+          {
+            name: 'pr_labels',
+            description: 'Add, remove, or set labels on a PR',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                pr: { type: 'number', description: 'Pull request number' },
+                action: { type: 'string', enum: ['add', 'remove', 'set'], description: 'Label action' },
+                labels: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Label names'
+                }
+              },
+              required: ['owner', 'repo', 'pr', 'action', 'labels']
+            }
+          },
+          {
+            name: 'pr_reviewers',
+            description: 'Request or remove reviewers on a PR',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                pr: { type: 'number', description: 'Pull request number' },
+                action: { type: 'string', enum: ['request', 'remove'], description: 'Reviewer action' },
+                reviewers: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'GitHub usernames'
+                },
+                team_reviewers: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Team slugs'
+                }
+              },
+              required: ['owner', 'repo', 'pr', 'action']
+            }
+          },
+          {
+            name: 'pr_create',
+            description: 'Create a new pull request from an existing branch',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                title: { type: 'string', description: 'PR title' },
+                body: { type: 'string', description: 'PR description' },
+                base: { type: 'string', description: 'Base branch (default: main)' },
+                head: { type: 'string', description: 'Head branch to merge from' },
+                draft: { type: 'boolean', description: 'Create as draft PR' }
+              },
+              required: ['owner', 'repo', 'title', 'head']
+            }
+          },
+          {
+            name: 'pr_merge',
+            description: 'Merge a pull request (CAUTION: destructive operation)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                pr: { type: 'number', description: 'Pull request number' },
+                method: { type: 'string', enum: ['merge', 'squash', 'rebase'], description: 'Merge method (default: squash)' },
+                commit_title: { type: 'string', description: 'Custom merge commit title' },
+                commit_message: { type: 'string', description: 'Custom merge commit message' },
+                delete_branch: { type: 'boolean', description: 'Delete head branch after merge (default: true)' }
+              },
+              required: ['owner', 'repo', 'pr']
+            }
           }
         ] as Tool[]
       };
@@ -353,6 +454,46 @@ export class PRReviewMCPServer {
           case 'pr_invoke': {
             const input = InvokeInputSchema.parse(args);
             const result = await prInvoke(input);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_poll_updates': {
+            const input = PollInputSchema.parse(args);
+            const result = await prPollUpdates(input, this.githubClient);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_labels': {
+            const input = LabelsInputSchema.parse(args);
+            const result = await prLabels(input);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_reviewers': {
+            const input = ReviewersInputSchema.parse(args);
+            const result = await prReviewers(input);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_create': {
+            const input = CreateInputSchema.parse(args);
+            const result = await prCreate(input);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+            };
+          }
+
+          case 'pr_merge': {
+            const input = MergeInputSchema.parse(args);
+            const result = await prMerge(input);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
             };

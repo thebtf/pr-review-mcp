@@ -132,7 +132,20 @@ const TOOLS = {
   pr_get: (pr, id) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), id }),
   pr_resolve: (pr, threadId) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), threadId }),
   pr_changes: (pr, cursor) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), cursor }),
-  pr_invoke: (pr, agent) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), agent: agent || 'all' })
+  pr_invoke: (pr, agent) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), agent: agent || 'all' }),
+  pr_poll_updates: (pr, since) => ({ owner: OWNER, repo: REPO, pr: parseInt(pr), since }),
+  pr_labels: (pr, action, ...labels) => ({
+    owner: OWNER, repo: REPO, pr: parseInt(pr), action, labels
+  }),
+  pr_reviewers: (pr, action, ...reviewers) => ({
+    owner: OWNER, repo: REPO, pr: parseInt(pr), action, reviewers
+  }),
+  pr_create: (head, title, base) => ({
+    owner: OWNER, repo: REPO, title: title || `PR from ${head}`, head, base: base || 'main'
+  }),
+  pr_merge: (pr, method) => ({
+    owner: OWNER, repo: REPO, pr: parseInt(pr), method: method || 'squash'
+  })
 };
 
 async function interactive(client) {
