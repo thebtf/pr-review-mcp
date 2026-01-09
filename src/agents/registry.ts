@@ -17,7 +17,7 @@ export interface AgentConfig {
   authorPattern: string | string[];
 }
 
-export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex';
+export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex' | 'copilot';
 
 /**
  * Agents that can be manually invoked via pr_invoke
@@ -58,6 +58,13 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: [],
     authorPattern: 'chatgpt-codex-connector',
+  },
+  copilot: {
+    name: 'Copilot',
+    command: '@copilot review',
+    type: 'mention',
+    supports: [],
+    authorPattern: 'copilot-pull-request-reviewer',
   },
 };
 
