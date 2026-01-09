@@ -43,10 +43,12 @@ class CoordinationStateManager {
     headSha: string,
     partitions: FilePartition[]
   ): string {
-    if (this.currentRun && !this.currentRun.completedAt) {
+    if (this.currentRun) {
+      const status = this.currentRun.completedAt ? 'completed' : 'active';
       console.warn(
-        `[coordination] Overwriting active run ${this.currentRun.runId} for ` +
-        `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr}`
+        `[coordination] Replacing ${status} run ${this.currentRun.runId} for ` +
+        `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr} ` +
+        `with new run for ${prInfo.owner}/${prInfo.repo}#${prInfo.pr}`
       );
     }
 
@@ -179,7 +181,7 @@ class CoordinationStateManager {
     }));
 
     return {
-      active: true,
+      active: !this.currentRun.completedAt, // active only if not completed
       runId: this.currentRun.runId,
       prInfo: this.currentRun.prInfo,
       progress: counts,

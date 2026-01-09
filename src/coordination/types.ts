@@ -27,6 +27,10 @@ export const GetWorkStatusSchema = z.object({
   run_id: z.string().optional()
 });
 
+export const ResetCoordinationSchema = z.object({
+  confirm: z.literal(true)
+});
+
 // TypeScript interfaces
 export interface FilePartition {
   file: string;
@@ -69,3 +73,4 @@ export interface CoordinationState {
 export type ClaimWorkInput = z.infer<typeof ClaimWorkSchema>;
 export type ReportProgressInput = z.infer<typeof ReportProgressSchema>;
 export type GetWorkStatusInput = z.infer<typeof GetWorkStatusSchema>;
+export type ResetCoordinationInput = z.infer<typeof ResetCoordinationSchema>;

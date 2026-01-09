@@ -1,14 +1,16 @@
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { stateManager } from '../coordination/state.js';
-import { 
-  ClaimWorkSchema, 
-  ReportProgressSchema, 
+import {
+  ClaimWorkSchema,
+  ReportProgressSchema,
   GetWorkStatusSchema,
+  ResetCoordinationSchema,
   type FilePartition,
   type ClaimWorkInput,
   type ReportProgressInput,
-  type GetWorkStatusInput
+  type GetWorkStatusInput,
+  type ResetCoordinationInput
 } from '../coordination/types.js';
 import { fetchAllThreads } from './shared.js';
 import { SEVERITY_ORDER, type Severity } from '../extractors/severity.js';
@@ -106,29 +108,55 @@ export async function prClaimWork(
   client: GitHubClient
 ) {
   const { agent_id, pr_info } = input;
-  
-  let currentRun = stateManager.getCurrentRun();
 
-  // Auto-create run if needed
+  const isActive = stateManager.isRunActive();
+  const currentRun = stateManager.getCurrentRun();
+
+  // Determine if we need to initialize a new run
+  let needsInit = false;
+
   if (!currentRun) {
+    // No run at all - need pr_info to start
     if (!pr_info) {
       throw new StructuredError(
         'not_found',
         'No active coordination run. Provide pr_info to start a new run.',
-        false  // Validation error - not retryable
+        false
       );
     }
-    await initializeRun(client, pr_info.owner, pr_info.repo, pr_info.pr);
+    needsInit = true;
   } else if (pr_info) {
-    // Verify pr_info matches current run if provided
+    // Run exists, pr_info provided - check if it's a different PR
     const curr = currentRun.prInfo;
-    if (curr.owner !== pr_info.owner || curr.repo !== pr_info.repo || curr.pr !== pr_info.pr) {
-      throw new StructuredError(
-        'permission',
-        `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR.`,
-        false  // Validation error - not retryable
-      );
+    const isDifferentPR =
+      curr.owner !== pr_info.owner ||
+      curr.repo !== pr_info.repo ||
+      curr.pr !== pr_info.pr;
+
+    if (isDifferentPR) {
+      // Different PR requested
+      if (isActive) {
+        // Current run is still active - cannot replace
+        throw new StructuredError(
+          'permission',
+          `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR.`,
+          false
+        );
+      }
+      // Current run completed - safe to replace
+      needsInit = true;
     }
+  } else if (!isActive) {
+    // Run exists but completed, no pr_info - error
+    throw new StructuredError(
+      'not_found',
+      'No active coordination run. Provide pr_info to start a new run.',
+      false
+    );
+  }
+
+  if (needsInit) {
+    await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr);
   }
 
   const partition = stateManager.claimPartition(agent_id);
@@ -180,5 +208,24 @@ export async function prGetWorkStatus(
   };
 }
 
+export async function prResetCoordination(
+  input: ResetCoordinationInput
+) {
+  const currentRun = stateManager.getCurrentRun();
+  const wasActive = stateManager.isRunActive();
+
+  stateManager.resetRun();
+
+  return {
+    status: 'reset',
+    previousRun: currentRun ? {
+      runId: currentRun.runId,
+      pr: `${currentRun.prInfo.owner}/${currentRun.prInfo.repo}#${currentRun.prInfo.pr}`,
+      wasActive,
+      completedAt: currentRun.completedAt
+    } : null
+  };
+}
+
 // Export schemas for registration
-export { ClaimWorkSchema, ReportProgressSchema, GetWorkStatusSchema };
+export { ClaimWorkSchema, ReportProgressSchema, GetWorkStatusSchema, ResetCoordinationSchema };

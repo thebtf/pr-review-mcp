@@ -36,9 +36,11 @@ import {
   prClaimWork,
   prReportProgress,
   prGetWorkStatus,
+  prResetCoordination,
   ClaimWorkSchema,
   ReportProgressSchema,
-  GetWorkStatusSchema
+  GetWorkStatusSchema,
+  ResetCoordinationSchema
 } from './tools/coordination.js';
 import { getInvokableAgentIds } from './agents/registry.js';
 
@@ -463,6 +465,17 @@ export class PRReviewMCPServer {
                 run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
               }
             }
+          },
+          {
+            name: 'pr_reset_coordination',
+            description: 'Reset/clear the current coordination run (use with caution)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                confirm: { type: 'boolean', description: 'Must be true to confirm reset', enum: [true] }
+              },
+              required: ['confirm']
+            }
           }
         ] as Tool[]
       };
@@ -512,7 +525,8 @@ export class PRReviewMCPServer {
       'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
       'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
       'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
-      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus)
+      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus),
+      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination)
     };
 
     // Handle tool calls
