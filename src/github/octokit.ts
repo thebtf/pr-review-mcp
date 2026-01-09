@@ -16,8 +16,9 @@ import type { GraphQlQueryResponseData } from '@octokit/graphql';
 
 // Use type annotation to avoid portable type inference issues
 type OctokitWithPluginsType = Octokit & ReturnType<typeof retry> & ReturnType<typeof throttling>;
-const OctokitWithPlugins: new (...args: ConstructorParameters<typeof Octokit>) => OctokitWithPluginsType =
-  Octokit.plugin(retry, throttling) as unknown as new (...args: ConstructorParameters<typeof Octokit>) => OctokitWithPluginsType;
+type OctokitWithPluginsConstructor = new (...args: ConstructorParameters<typeof Octokit>) => OctokitWithPluginsType;
+const OctokitWithPlugins: OctokitWithPluginsConstructor =
+  Octokit.plugin(retry, throttling) as unknown as OctokitWithPluginsConstructor;
 
 // ============================================================================
 // Singleton Instances

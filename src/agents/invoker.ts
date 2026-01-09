@@ -150,7 +150,7 @@ export async function invokeAgent(
 }
 
 /**
- * Invoke multiple agents and aggregate results
+ * Invoke multiple agents in parallel and aggregate results
  */
 export async function invokeMultipleAgents(
   owner: string,
@@ -159,14 +159,11 @@ export async function invokeMultipleAgents(
   agentIds: InvokableAgentId[],
   options?: InvokeOptions
 ): Promise<InvokeResult[]> {
-  const results: InvokeResult[] = [];
+  const promises = agentIds.map(agentId =>
+    invokeAgent(owner, repo, pr, agentId, options)
+  );
 
-  for (const agentId of agentIds) {
-    const result = await invokeAgent(owner, repo, pr, agentId, options);
-    results.push(result);
-  }
-
-  return results;
+  return Promise.all(promises);
 }
 
 /**

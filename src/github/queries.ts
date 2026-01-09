@@ -24,7 +24,7 @@ export const QUERIES = {
               path
               line
               diffSide
-              comments(first: 5) {
+              comments(first: 50) {
                 nodes {
                   id
                   body

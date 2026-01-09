@@ -1,6 +1,6 @@
 /**
  * GitHub Client - Octokit-based with circuit breaker
- * Migrated from gh CLI wrapper to @octokit/graphql
+ * Uses @octokit/graphql for GitHub API access with resilience features.
  */
 
 import { randomUUID } from 'crypto';
@@ -53,6 +53,7 @@ class CircuitBreaker {
   private state: CircuitState = 'closed';
   private failures = 0;
   private lastFailure: number | null = null;
+  private halfOpenTestInProgress = false;
   private readonly resetTimeoutMs = 60000; // 1 minute
   private readonly failureThreshold = 3;
 
@@ -70,14 +71,29 @@ class CircuitBreaker {
       }
     }
 
+    // Half-open: only allow one test request at a time
+    if (this.state === 'half-open') {
+      if (this.halfOpenTestInProgress) {
+        throw new StructuredError(
+          'circuit_open',
+          'GitHub API unavailable - circuit breaker testing',
+          true,
+          'Wait for test request to complete'
+        );
+      }
+      this.halfOpenTestInProgress = true;
+    }
+
     try {
       const result = await fn();
       this.failures = 0;
       this.state = 'closed';
+      this.halfOpenTestInProgress = false;
       return result;
     } catch (e) {
       this.failures++;
       this.lastFailure = Date.now();
+      this.halfOpenTestInProgress = false;
 
       // Auth errors = immediate open (won't self-heal)
       // Check for 401 status from HTTP errors (StructuredError auth is handled in executeGraphQL)
@@ -109,6 +125,7 @@ class CircuitBreaker {
     this.state = 'closed';
     this.failures = 0;
     this.lastFailure = null;
+    this.halfOpenTestInProgress = false;
   }
 }
 
@@ -160,26 +177,33 @@ export class GitHubClient {
       if (e instanceof GraphqlResponseError) {
         const errors = e.errors || [];
         if (errors.length > 0) {
-          const error = errors[0] as GraphQLError;
+          const error = errors[0];
 
-          if (error.type === 'NOT_FOUND') {
-            throw new StructuredError('not_found', error.message, false);
+          // Validate error structure before casting
+          if (!error || typeof error !== 'object' || !('message' in error)) {
+            throw new StructuredError('parse', 'Unexpected GraphQL error structure', false);
           }
-          if (error.type === 'FORBIDDEN') {
-            throw new StructuredError('permission', error.message, false);
+
+          const typedError = error as GraphQLError;
+
+          if (typedError.type === 'NOT_FOUND') {
+            throw new StructuredError('not_found', typedError.message, false);
+          }
+          if (typedError.type === 'FORBIDDEN') {
+            throw new StructuredError('permission', typedError.message, false);
           }
 
           // Partial data is unreliable - throw error instead of returning incomplete results
           if (e.data) {
             throw new StructuredError(
               'parse',
-              `GraphQL returned partial data: ${error.message}`,
+              `GraphQL returned partial data: ${typedError.message}`,
               false,
               'Query returned incomplete results - check permissions or data availability'
             );
           }
 
-          throw new StructuredError('parse', `GraphQL error: ${error.message}`, false);
+          throw new StructuredError('parse', `GraphQL error: ${typedError.message}`, false);
         }
       }
 

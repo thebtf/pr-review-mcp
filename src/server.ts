@@ -19,14 +19,14 @@ import {
   Prompt,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { ZodError } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
 import { prSummary, SummaryInputSchema } from './tools/summary.js';
 import { prList, ListInputSchema } from './tools/list.js';
 import { prGet, GetInputSchema } from './tools/get.js';
 import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
-import { prInvoke, InvokeInputSchema, InvokeInput } from './tools/invoke.js';
-import type { SummaryInput, ListInput, GetInput, ChangesInput } from './github/types.js';
+import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
 
 // ============================================================================
 // Workflow Prompt
@@ -311,7 +311,7 @@ export class PRReviewMCPServer {
       try {
         switch (name) {
           case 'pr_summary': {
-            const input = args as unknown as SummaryInput;
+            const input = SummaryInputSchema.parse(args);
             const result = await prSummary(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -319,7 +319,7 @@ export class PRReviewMCPServer {
           }
 
           case 'pr_list': {
-            const input = args as unknown as ListInput;
+            const input = ListInputSchema.parse(args);
             const result = await prList(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -327,7 +327,7 @@ export class PRReviewMCPServer {
           }
 
           case 'pr_get': {
-            const input = args as unknown as GetInput;
+            const input = GetInputSchema.parse(args);
             const result = await prGet(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -335,7 +335,7 @@ export class PRReviewMCPServer {
           }
 
           case 'pr_resolve': {
-            const input = args as unknown as { owner: string; repo: string; pr: number; threadId: string };
+            const input = ResolveInputSchema.parse(args);
             const result = await prResolveWithContext(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -343,7 +343,7 @@ export class PRReviewMCPServer {
           }
 
           case 'pr_changes': {
-            const input = args as unknown as ChangesInput;
+            const input = ChangesInputSchema.parse(args);
             const result = await prChanges(input, this.githubClient);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -351,7 +351,7 @@ export class PRReviewMCPServer {
           }
 
           case 'pr_invoke': {
-            const input = args as unknown as InvokeInput;
+            const input = InvokeInputSchema.parse(args);
             const result = await prInvoke(input);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
@@ -362,6 +362,10 @@ export class PRReviewMCPServer {
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
       } catch (error) {
+        if (error instanceof ZodError) {
+          throw new McpError(ErrorCode.InvalidRequest, `Validation error: ${error.message}`);
+        }
+
         if (error instanceof McpError) {
           throw error;
         }

@@ -42,13 +42,27 @@ npm link
 ## Prerequisites
 
 - Node.js 18+
-- GitHub Personal Access Token with `repo` scope
+- GitHub Token (see below)
 
 ## Configuration
 
-### Environment Variable
+### GitHub Token Setup
 
-Set your GitHub token:
+**Recommended: Fine-grained Personal Access Token (PAT)**
+
+Create a fine-grained PAT at https://github.com/settings/tokens?type=beta with minimal permissions:
+
+| Permission | Access | Required For |
+|------------|--------|--------------|
+| Contents | Read | Reading `.github/pr-review.json` config |
+| Pull requests | Read/Write | Reading PR comments, resolving threads |
+| Issues | Read/Write | Qodo tracker (issue comments) |
+
+**Alternative: Classic PAT** with `repo` scope (broader permissions)
+
+> ⚠️ **Security**: Never commit tokens to source control. Use environment variables or secret managers only.
+
+### Environment Variable
 
 ```bash
 export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxxxxxx
@@ -71,12 +85,14 @@ For local development:
       "command": "node",
       "args": ["/path/to/pr-review-mcp/dist/index.js"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       }
     }
   }
 }
 ```
+
+> 💡 Use `${GITHUB_PERSONAL_ACCESS_TOKEN}` to reference an environment variable, or store tokens in a separate `.env` file not committed to git.
 
 After npm publish:
 
@@ -87,7 +103,7 @@ After npm publish:
       "command": "npx",
       "args": ["pr-review-mcp"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       }
     }
   }

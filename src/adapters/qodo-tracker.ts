@@ -8,6 +8,7 @@
 
 import { getOctokit } from '../github/octokit.js';
 import { StructuredError } from '../github/client.js';
+import { SEVERITY_ORDER } from '../extractors/severity.js';
 import type { QodoReview, QodoComment } from './qodo.js';
 import { qodoToNormalizedComments } from './qodo.js';
 
@@ -87,8 +88,8 @@ function generateTrackerBody(
     bySeverity.set(item.severity, list);
   }
 
-  // Order: CRIT, MAJOR, MINOR, N/A
-  const order = ['CRIT', 'MAJOR', 'MINOR', 'N/A'];
+  // Use severity order from extractor (DRY)
+  const order = SEVERITY_ORDER;
 
   for (const severity of order) {
     const severityItems = bySeverity.get(severity);
@@ -149,6 +150,20 @@ export async function fetchTrackerComment(
   } catch {
     return null;
   }
+}
+
+/**
+ * Get resolved status map from tracker comment
+ * Returns Map<qodo-id, resolved> for applying to Qodo comments
+ */
+export async function getTrackerResolvedMap(
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<Map<string, boolean>> {
+  const tracker = await fetchTrackerComment(owner, repo, pr);
+  if (!tracker) return new Map();
+  return parseTrackerBody(tracker.body);
 }
 
 /**
@@ -347,15 +362,11 @@ export async function toggleQodoIssue(
   // Get current state (creates if needed)
   const state = await getTrackerState(owner, repo, pr, qodoReview);
 
-  console.error(`[tracker] state.commentId=${state.commentId}, items=${state.items.length}`);
-
   // Find the issue
   const item = state.items.find(i => i.id === issueId || i.id.endsWith(issueId));
   if (!item) {
     throw new StructuredError('not_found', `Qodo issue ${issueId} not found`, false);
   }
-
-  console.error(`[tracker] Found item: ${item.id}, current resolved=${item.resolved}, setting to ${resolved}`);
 
   // Update status
   item.resolved = resolved;
@@ -365,12 +376,10 @@ export async function toggleQodoIssue(
 
   // Always re-fetch to find ANY existing tracker (handles duplicates)
   const latest = await fetchTrackerComment(owner, repo, pr);
-  console.error(`[tracker] Check: latest=${latest?.id}, state.commentId=${state.commentId}`);
 
   if (latest) {
     // Merge any changes made by others
     const latestResolved = parseTrackerBody(latest.body);
-    console.error(`[tracker] Merging ${latestResolved.size} items from latest`);
     for (const i of state.items) {
       if (i.id !== item.id) {
         // Preserve others' changes
@@ -379,13 +388,11 @@ export async function toggleQodoIssue(
     }
     // Regenerate with merged state
     const mergedBody = generateTrackerBody(state.items, qodoReview.commentId, owner, repo, pr);
-    console.error(`[tracker] Updating comment ${latest.id}`);
     await updateTrackerComment(owner, repo, latest.id, mergedBody);
     state.commentId = latest.id;
     state.commentUrl = latest.url;
   } else {
     // No tracker exists - create new
-    console.error(`[tracker] No tracker found, creating new`);
     const created = await createTrackerComment(owner, repo, pr, body);
     state.commentId = created.id;
     state.commentUrl = created.url;

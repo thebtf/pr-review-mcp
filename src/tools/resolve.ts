@@ -13,6 +13,7 @@ import type { ResolveInput, ResolveOutput, ResolveThreadData } from '../github/t
 export const ResolveInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
   repo: z.string().min(1, 'Repository name is required'),
+  pr: z.number().int().positive('PR number must be positive'),
   threadId: z.string().min(1, 'Thread ID is required')
 });
 
@@ -36,8 +37,11 @@ export async function prResolveWithContext(
     maxItems: 1000
   });
 
+  // Match exact ID or suffix after separator (prevents false positives)
   const comment = comments.find(c =>
-    c.threadId === threadId || c.threadId.endsWith(threadId)
+    c.threadId === threadId ||
+    c.threadId.endsWith(`_${threadId}`) ||
+    c.threadId.endsWith(`-${threadId}`)
   );
 
   if (!comment) {

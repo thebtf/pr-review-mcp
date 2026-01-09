@@ -100,6 +100,10 @@ export function extractPrompt(body: string | null | undefined, source: CommentSo
     return extractCodexPrompt(body);
   }
 
+  if (source === 'copilot') {
+    return extractCopilotPrompt(body);
+  }
+
   // CodeRabbit and unknown: use pattern matching
   for (const { pattern, confidence, name, captureGroup } of PROMPT_PATTERNS) {
     const match = body.match(pattern);
@@ -139,6 +143,43 @@ function extractGeminiPrompt(body: string): PromptExtraction {
     confidence: 'low', // Gemini doesn't have explicit AI prompts
     pattern: 'gemini_description'
   };
+}
+
+/**
+ * Extract prompt from Copilot comments
+ * Copilot uses ```suggestion blocks with description text above
+ */
+function extractCopilotPrompt(body: string): PromptExtraction {
+  // Extract suggestion block (committable change)
+  const suggestionMatch = body.match(/```suggestion\n([\s\S]*?)```/);
+
+  if (suggestionMatch) {
+    // Suggestion block found - HIGH confidence for suggested change
+    const suggestion = suggestionMatch[1].trim();
+    // Include the description (text before suggestion) for context
+    const description = body.slice(0, body.indexOf('```suggestion')).trim();
+
+    const prompt = description
+      ? `${description}\n\nSuggested change:\n${suggestion}`
+      : suggestion;
+
+    return {
+      prompt: prompt,
+      confidence: 'high',
+      pattern: 'copilot_suggestion'
+    };
+  }
+
+  // No suggestion block - use description as low confidence prompt
+  if (body.length > 20) {
+    return {
+      prompt: body.trim(),
+      confidence: 'low',
+      pattern: 'copilot_description'
+    };
+  }
+
+  return { prompt: null, confidence: 'absent', pattern: null };
 }
 
 /**

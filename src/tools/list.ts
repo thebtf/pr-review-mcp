@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { GitHubClient } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
+import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
 import type { ListInput, ListOutput, ListComment } from '../github/types.js';
 
 export const ListInputSchema = z.object({
@@ -32,10 +33,11 @@ export async function prList(
   const validated = ListInputSchema.parse(input);
   const { owner, repo, pr, filter = {}, max = 20 } = validated;
 
-  // Fetch review threads and Qodo review in parallel
-  const [threadsResult, qodoReview] = await Promise.all([
+  // Fetch review threads, Qodo review, and tracker resolved status in parallel
+  const [threadsResult, qodoReview, trackerResolved] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { filter, maxItems: max }),
-    fetchQodoReview(owner, repo, pr)
+    fetchQodoReview(owner, repo, pr),
+    getTrackerResolvedMap(owner, repo, pr)
   ]);
 
   const { comments, totalCount, hasMore } = threadsResult;
@@ -53,12 +55,15 @@ export async function prList(
     hasAiPrompt: c.aiPrompt !== null
   }));
 
-  // Add Qodo comments if available
+  // Add Qodo comments if available, with resolved status from tracker
   if (qodoReview) {
     const qodoComments = qodoToNormalizedComments(qodoReview);
     for (const qc of qodoComments) {
+      // Get resolved status from tracker (default to false if not tracked)
+      const resolved = trackerResolved.get(qc.id) ?? false;
+
       // Apply filters
-      if (filter.resolved !== undefined && qc.resolved !== filter.resolved) continue;
+      if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
       if (filter.file && !qc.file.includes(filter.file)) continue;
 
       listComments.push({
@@ -69,7 +74,7 @@ export async function prList(
         severity: qc.severity,
         source: 'qodo',
         title: qc.title,
-        resolved: qc.resolved,
+        resolved,
         hasAiPrompt: false
       });
     }

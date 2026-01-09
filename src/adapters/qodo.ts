@@ -250,8 +250,10 @@ function parseFocusAreas(
     const afterMatch = body.slice(match.index).match(/<\/summary>\s*([\s\S]*?)<\/details>/);
     const description = afterMatch?.[1]?.replace(/```[\s\S]*?```/g, '').replace(/<[^>]+>/g, ' ').trim().slice(0, 300) || '';
 
+    const issueIndex = index;
+    index++;
     comments.push({
-      id: `qodo-focus-${commentId}-${index++}`,
+      id: `qodo-focus-${commentId}-${issueIndex}`,
       source: 'qodo',
       file, // Now contains actual file path instead of URL
       line,
