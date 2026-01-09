@@ -3,10 +3,11 @@ dist/
 *.log
 .env
 
-# Test files
-test-*.mjs
-mcp-test*.mjs
-fetch-*.mjs
+# Test files (root only, not scripts/)
+/test-*.mjs
+/mcp-test*.mjs
+/fetch-*.mjs
+/*.test.mjs
 
 # IDE
 .idea/
