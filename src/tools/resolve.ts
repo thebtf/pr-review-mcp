@@ -8,6 +8,7 @@ import { QUERIES } from '../github/queries.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview } from '../adapters/qodo.js';
 import { toggleQodoIssue } from '../adapters/qodo-tracker.js';
+import { stateManager } from '../coordination/state.js';
 import type { ResolveInput, ResolveOutput, ResolveThreadData } from '../github/types.js';
 
 export const ResolveInputSchema = z.object({
@@ -30,6 +31,11 @@ export async function prResolveWithContext(
   // Check if this is a Qodo issue ID
   if (threadId.startsWith('qodo-')) {
     return resolveQodoIssue(owner, repo, pr, threadId);
+  }
+
+  if (threadId.startsWith('coderabbit-nitpick-')) {
+    await stateManager.markNitpickResolved(threadId, 'agent');
+    return { success: true, synthetic: true, message: 'Nitpick marked as resolved internally' };
   }
 
   // Find the thread first

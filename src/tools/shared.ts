@@ -6,6 +6,7 @@ import { GitHubClient, StructuredError } from '../github/client.js';
 import { QUERIES } from '../github/queries.js';
 import type {
   ListThreadsData,
+  ListReviewsData,
   ReviewThread,
   ProcessedComment,
   ProcessedReply,
@@ -13,6 +14,45 @@ import type {
 } from '../github/types.js';
 import { extractPrompt, extractTitle, truncateBody } from '../extractors/prompt.js';
 import { extractSeverity } from '../extractors/severity.js';
+import { parseNitpicksFromReviewBody, nitpickToProcessedComment } from '../extractors/coderabbit-nitpicks.js';
+import { stateManager } from '../coordination/state.js';
+
+/**
+ * Fetch CodeRabbit review bodies and extract nitpicks
+ */
+async function fetchCodeRabbitNitpicks(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<ProcessedComment[]> {
+  try {
+    const data = await client.graphql<ListReviewsData>(QUERIES.listReviews, {
+      owner,
+      repo,
+      pr
+    });
+
+    const reviews = data?.repository?.pullRequest?.reviews?.nodes || [];
+
+    // Filter for CodeRabbit reviews only
+    const coderabbitReviews = reviews.filter(r =>
+      r.author?.login === 'coderabbitai' || r.author?.login === 'coderabbit[bot]'
+    );
+
+    // Extract nitpicks from each review body
+    const allNitpicks = coderabbitReviews.flatMap(review =>
+      parseNitpicksFromReviewBody(review.id, review.body)
+    );
+
+    // Convert to ProcessedComment format
+    return allNitpicks.map(nitpickToProcessedComment);
+  } catch (error) {
+    // Silently fail - nitpicks are a bonus, not critical
+    console.error('Failed to fetch CodeRabbit nitpicks:', error);
+    return [];
+  }
+}
 
 /**
  * Process GraphQL thread into comment object
@@ -66,7 +106,7 @@ export interface FetchResult {
 }
 
 /**
- * Fetch all threads with pagination
+ * Fetch all threads with pagination, including CodeRabbit nitpicks
  */
 export async function fetchAllThreads(
   client: GitHubClient,
@@ -79,6 +119,11 @@ export async function fetchAllThreads(
   const comments: ProcessedComment[] = [];
   let cursor = startCursor;
   let totalCount = 0;
+
+  // Fetch inline threads and CodeRabbit nitpicks in parallel (only on first page)
+  const nitpicksPromise = startCursor === null
+    ? fetchCodeRabbitNitpicks(client, owner, repo, pr)
+    : Promise.resolve([]);
 
   while (comments.length < maxItems) {
     const data = await client.graphql<ListThreadsData>(QUERIES.listThreads, {
@@ -110,11 +155,39 @@ export async function fetchAllThreads(
     }
 
     if (!threads.pageInfo.hasNextPage) {
-      return { comments, totalCount, cursor: threads.pageInfo.endCursor, hasMore: false };
+      cursor = threads.pageInfo.endCursor;
+      break;
     }
     cursor = threads.pageInfo.endCursor;
   }
 
-  // Reached maxItems but more pages exist
-  return { comments, totalCount, cursor, hasMore: true };
+  // Merge nitpicks (only on first page fetch)
+  const nitpicks = await nitpicksPromise;
+  if (nitpicks.length > 0 && startCursor === null) {
+    const unresolvedNitpicks: ProcessedComment[] = [];
+    for (const n of nitpicks) {
+      const isResolved = await stateManager.isNitpickResolved(n.id);
+      if (!isResolved) {
+        unresolvedNitpicks.push(n);
+      }
+    }
+
+    // Apply same filters to nitpicks
+    const filteredNitpicks = unresolvedNitpicks.filter(comment => {
+      if (filter.resolved !== undefined && comment.resolved !== filter.resolved) return false;
+      if (filter.outdated !== undefined && comment.outdated !== filter.outdated) return false;
+      if (filter.file && !comment.file.includes(filter.file)) return false;
+      if (filter.author && comment.author !== filter.author) return false;
+      return true;
+    });
+
+    // Prepend nitpicks to comments (they appear first as "synthetic" comments)
+    comments.unshift(...filteredNitpicks);
+
+    // Adjust total count to include nitpicks
+    totalCount += unresolvedNitpicks.length;
+  }
+
+  const hasMore = comments.length >= maxItems;
+  return { comments, totalCount, cursor, hasMore };
 }

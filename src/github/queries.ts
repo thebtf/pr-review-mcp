@@ -66,5 +66,25 @@ export const QUERIES = {
         }
       }
     }
+  `,
+
+  /**
+   * Get PR reviews (for extracting CodeRabbit nitpicks from review bodies)
+   */
+  listReviews: `
+    query($owner: String!, $repo: String!, $pr: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          reviews(first: 50) {
+            nodes {
+              id
+              body
+              state
+              author { login }
+            }
+          }
+        }
+      }
+    }
   `
 } as const;
