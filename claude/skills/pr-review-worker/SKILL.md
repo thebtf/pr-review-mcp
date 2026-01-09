@@ -24,6 +24,8 @@ allowed-tools:
 
 # PR Review Worker
 
+**HANDOFF:** This worker is spawned by pr-review-orchestrator. Begin workflow IMMEDIATELY with the parameters provided in the spawn prompt.
+
 Use this skill to claim file partitions and resolve their review comments.
 Each partition contains a file path and a list of thread IDs.
 
@@ -32,12 +34,16 @@ Each partition contains a file path and a list of thread IDs.
 - owner, repo, pr (needed on first claim to initialize the run)
 
 ## Workflow
-1. CLAIM: call pr_claim_work with agent_id and pr_info on first attempt.
-2. PROCESS: for each thread id in partition.comments:
-   - pr_get to fetch details and aiPrompt (if present).
-   - Apply the fix, verify locally, then pr_resolve with threadId.
-3. REPORT: pr_report_progress with status and counts for the file.
-4. REPEAT: claim another partition until status=no_work.
+1. **CLAIM (FIRST ACTION):** Call pr_claim_work IMMEDIATELY with agent_id and pr_info.
+   - First claim: include `pr_info: {owner, repo, pr}` to initialize the run
+   - Subsequent claims: omit pr_info (run already initialized)
+2. **PROCESS:** For each thread id in partition.comments:
+   - **READ:** Call `Read` on the partition file path first
+   - **FETCH:** pr_get to fetch details and aiPrompt (if present)
+   - Apply the fix, verify locally, then pr_resolve with threadId
+3. **REPORT:** pr_report_progress with status and counts for the file.
+4. **REPEAT:** Claim another partition until status=no_work.
+   - **BACKOFF POLICY:** If status=no_work, wait 30s and retry once. After 2 consecutive no_work responses, EXIT gracefully.
 
 ### 2b. CONFIDENCE LAYER (One-Hop Investigation)
 

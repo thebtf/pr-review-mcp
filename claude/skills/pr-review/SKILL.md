@@ -2,7 +2,7 @@
 name: pr-review
 description: |
   Autonomous multi-agent PR review orchestrator. Processes all AI review comments until PR is ready for merge.
-  Supports CodeRabbit, Gemini, Codex, Sourcery, Qodo agents.
+  Supports CodeRabbit, Gemini, Codex, Sourcery, Qodo, Copilot agents.
 
   Triggers: "review PR", "PR review", "process comments", "AI review", "review cycle"
 context: fork
@@ -99,7 +99,7 @@ INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
 ```
 1. Configure (first run):
    - mode: sequential | parallel | round-robin
-   - agents: [coderabbit, gemini, codex, ...]
+   - agents: [coderabbit, gemini, codex, sourcery, qodo, copilot]
 
 2. Start cycle → record timestamp for polling
 ```

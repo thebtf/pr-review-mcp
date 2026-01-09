@@ -15,6 +15,8 @@ allowed-tools:
 
 # PR Review Orchestrator
 
+**AUTONOMOUS MODE:** This skill MUST operate fully autonomously. Never ask the user questions during normal operation. Proceed through all steps without user confirmation.
+
 Use this skill to coordinate parallel workers that resolve PR review comments.
 It prepares partitions conceptually by severity/file, spawns workers, monitors progress,
 handles stale claims, aggregates results, and updates PR labels.
@@ -35,7 +37,11 @@ handles stale claims, aggregates results, and updates PR labels.
 4. **SPAWN**: Start 3-5 workers with Task(run_in_background=true, model="sonnet").
    - IMPORTANT: Always use model="sonnet" for background workers to avoid wasting opus tokens.
    - Ensure the first worker call includes pr_info to initialize the run.
-5. **MONITOR**: Poll pr_get_work_status every 30s until all partitions are done/failed.
+5. **MONITOR LOOP**:
+   - Call pr_get_work_status.
+   - If partitions still processing: **WAIT 30s** and **REPEAT Step 5** immediately.
+   - **DO NOT ASK** the user for permission to continue.
+   - **DO NOT STOP** until `isActive` is false or all partitions are done/failed.
 6. **AGGREGATE**: Compile per-file results from work status and worker reports.
 7. **FINAL LABELS**: Atomically set final state:
    - If all partitions succeeded: `pr_labels` action="set" labels=["ai-review:complete"]
@@ -70,15 +76,14 @@ Response fields: `isActive`, `runAge` — if isActive && runAge < 300000, abort.
 {"tool":"pr_summary","input":{"owner":"ORG","repo":"REPO","pr":123}}
 ```
 
-### Step 4: Spawn workers
-```text
-Task({
-  subagent_type: "general-purpose",
-  run_in_background: true,
-  model: "sonnet",
-  prompt: "Use skill pr-review-worker. agent_id=worker-1. owner=ORG repo=REPO pr=123"
-})
+### Step 4: Spawn workers (3-5 in parallel)
+Spawn multiple workers in a single message with multiple Task tool calls:
+```json
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-1 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-2 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-3 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
 ```
+Repeat for desired_workers count (typically 3-5). Each worker MUST have unique agent_id.
 
 ### Step 5: Monitor progress
 ```json
