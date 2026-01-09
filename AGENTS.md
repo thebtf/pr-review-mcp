@@ -100,6 +100,7 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 |------|-------------|
 | **Test via MCP** | Always test through MCP protocol, not direct imports |
 | **No gh CLI in tests** | Use MCP tools, not raw `gh` commands |
+| **PR ops via MCP only** | **CRITICAL:** All PR operations must go through MCP server, never direct `gh` CLI |
 | **Parallel fetching** | Fetch review threads + Qodo in parallel |
 | **Windows compat** | Use `MSYS_NO_PATHCONV=1` for slash commands |
 

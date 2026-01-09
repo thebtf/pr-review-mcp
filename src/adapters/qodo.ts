@@ -6,6 +6,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 
 export interface QodoComment {
   id: string;
@@ -35,6 +36,52 @@ const QODO_BOT = 'qodo-code-review[bot]';
 const MARKER = 'PR Reviewer Guide';
 
 /**
+ * Fetch PR files and create a map of diff hash -> file path
+ * GitHub uses SHA256 of the file path for diff anchors
+ */
+async function fetchPRFilesMap(
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<Map<string, string>> {
+  const result = spawnSync('gh', [
+    'api',
+    `repos/${owner}/${repo}/pulls/${pr}/files`,
+    '--jq', '.[].filename'
+  ], {
+    encoding: 'utf-8',
+    maxBuffer: 5 * 1024 * 1024,
+    windowsHide: true
+  });
+
+  const fileMap = new Map<string, string>();
+
+  if (result.status !== 0 || !result.stdout.trim()) {
+    return fileMap;
+  }
+
+  const files = result.stdout.trim().split('\n');
+  for (const file of files) {
+    const hash = createHash('sha256').update(file).digest('hex');
+    fileMap.set(hash, file);
+  }
+
+  return fileMap;
+}
+
+/**
+ * Extract file path from Qodo URL using the file hash map
+ */
+function resolveFileFromUrl(url: string, fileMap: Map<string, string>): string {
+  // URL format: .../files#diff-{hash}R{start}-R{end}
+  const hashMatch = url.match(/#diff-([a-f0-9]{64})/i);
+  if (!hashMatch) return url;
+
+  const hash = hashMatch[1].toLowerCase();
+  return fileMap.get(hash) || url;
+}
+
+/**
  * Fetch Qodo's persistent review comment from a PR
  */
 export async function fetchQodoReview(
@@ -42,7 +89,27 @@ export async function fetchQodoReview(
   repo: string,
   pr: number
 ): Promise<QodoReview | null> {
-  // Fetch issue comments from Qodo bot
+  // Fetch Qodo comment and PR files in parallel
+  const [qodoResult, fileMap] = await Promise.all([
+    fetchQodoComment(owner, repo, pr),
+    fetchPRFilesMap(owner, repo, pr)
+  ]);
+
+  if (!qodoResult) {
+    return null;
+  }
+
+  return parseQodoComment(qodoResult, owner, repo, pr, fileMap);
+}
+
+/**
+ * Fetch the raw Qodo comment from issue comments
+ */
+async function fetchQodoComment(
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<{ id: number; html_url: string; updated_at: string; body: string } | null> {
   const result = spawnSync('gh', [
     'api',
     `repos/${owner}/${repo}/issues/${pr}/comments`,
@@ -59,26 +126,20 @@ export async function fetchQodoReview(
 
   // Parse JSON (gh api with jq returns newline-separated JSON objects)
   const lines = result.stdout.trim().split('\n');
-  let comment: { id: number; html_url: string; updated_at: string; body: string } | null = null;
-  
+
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
       // Take the first (and should be only) persistent review
       if (parsed.body?.includes(MARKER)) {
-        comment = parsed;
-        break;
+        return parsed;
       }
     } catch {
       continue;
     }
   }
 
-  if (!comment) {
-    return null;
-  }
-
-  return parseQodoComment(comment, owner, repo, pr);
+  return null;
 }
 
 /**
@@ -88,10 +149,11 @@ function parseQodoComment(
   comment: { id: number; html_url: string; updated_at: string; body: string },
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  fileMap: Map<string, string>
 ): QodoReview {
   const body = comment.body;
-  
+
   // Extract commit SHA
   const commitMatch = body.match(/commit\s+(?:https:\/\/github\.com\/[^/]+\/[^/]+\/commit\/)?([a-f0-9]{40})/i);
   const commitSha = commitMatch?.[1] || '';
@@ -106,8 +168,8 @@ function parseQodoComment(
   // Parse security concerns
   const securityConcerns = parseSecurityConcerns(body, comment.id, owner, repo, pr);
 
-  // Parse focus areas
-  const focusAreas = parseFocusAreas(body, comment.id, owner, repo, pr);
+  // Parse focus areas with file path resolution
+  const focusAreas = parseFocusAreas(body, comment.id, owner, repo, pr, fileMap);
 
   return {
     commentId: comment.id,
@@ -173,10 +235,11 @@ function parseFocusAreas(
   commentId: number,
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  fileMap: Map<string, string>
 ): QodoComment[] {
   const comments: QodoComment[] = [];
-  
+
   // Find all details blocks with file links
   const detailsRegex = /<details>\s*<summary>\s*<a\s+href='([^']+)'[^>]*>\s*<strong>([^<]+)<\/strong>/g;
   let match;
@@ -185,22 +248,24 @@ function parseFocusAreas(
   while ((match = detailsRegex.exec(body)) !== null) {
     const url = match[1];
     const title = match[2].trim();
-    
+
     // Parse file and line from URL
     // Format: .../files#diff-{hash}R{start}-R{end}
     const lineMatch = url.match(/R(\d+)(?:-R(\d+))?$/);
     const line = lineMatch ? parseInt(lineMatch[1]) : null;
     const lineEnd = lineMatch?.[2] ? parseInt(lineMatch[2]) : line;
 
-    // Extract file path from diff hash (we can't reverse the hash, but we can show the link)
-    // Try to find file name in the surrounding context
+    // Resolve file path from URL hash
+    const file = resolveFileFromUrl(url, fileMap);
+
+    // Extract description from the details content
     const afterMatch = body.slice(match.index).match(/<\/summary>\s*([\s\S]*?)<\/details>/);
     const description = afterMatch?.[1]?.replace(/```[\s\S]*?```/g, '').replace(/<[^>]+>/g, ' ').trim().slice(0, 300) || '';
 
     comments.push({
       id: `qodo-focus-${commentId}-${index++}`,
       source: 'qodo',
-      file: url, // Store URL since we can't easily get file path
+      file, // Now contains actual file path instead of URL
       line,
       lineEnd,
       severity: 'MAJOR',
