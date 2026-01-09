@@ -166,10 +166,14 @@ export class GitHubClient {
             throw new StructuredError('permission', error.message, false);
           }
 
-          // Check for partial data
+          // Partial data is unreliable - throw error instead of returning incomplete results
           if (e.data) {
-            console.warn(`GraphQL warning: ${error.message}`);
-            return e.data as T;
+            throw new StructuredError(
+              'parse',
+              `GraphQL returned partial data: ${error.message}`,
+              false,
+              'Query returned incomplete results - check permissions or data availability'
+            );
           }
 
           throw new StructuredError('parse', `GraphQL error: ${error.message}`, false);
