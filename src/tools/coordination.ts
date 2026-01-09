@@ -109,9 +109,9 @@ export async function prClaimWork(
   if (!currentRun) {
     if (!pr_info) {
       throw new StructuredError(
-        'not_found', 
-        'No active coordination run. Provide pr_info to start a new run.', 
-        true
+        'not_found',
+        'No active coordination run. Provide pr_info to start a new run.',
+        false  // Validation error - not retryable
       );
     }
     await initializeRun(client, pr_info.owner, pr_info.repo, pr_info.pr);
@@ -123,7 +123,7 @@ export async function prClaimWork(
       throw new StructuredError(
         'parse',
         `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR.`,
-        true
+        false  // Validation error - not retryable
       );
     }
   }

@@ -34,6 +34,9 @@ class CoordinationStateManager {
       startedAt: new Date().toISOString()
     };
 
+    // Mark as completed immediately if no partitions (empty PR)
+    this.checkCompletion();
+
     return runId;
   }
 
@@ -83,9 +86,9 @@ class CoordinationStateManager {
     const partition = this.currentRun.partitions.get(file);
     if (!partition) return false;
 
-    // Verify ownership (or allow if just claiming for cleanup/recovery?)
-    // We enforce ownership for now.
-    if (partition.claimedBy && partition.claimedBy !== agentId) {
+    // Strict ownership check: partition must be claimed by this agent
+    // Prevents marking unclaimed/re-queued partitions as done
+    if (partition.status !== 'claimed' || partition.claimedBy !== agentId) {
       return false;
     }
 
