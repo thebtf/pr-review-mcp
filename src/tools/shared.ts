@@ -15,6 +15,7 @@ import type {
 import { extractPrompt, extractTitle, truncateBody } from '../extractors/prompt.js';
 import { extractSeverity } from '../extractors/severity.js';
 import { parseNitpicksFromReviewBody, nitpickToProcessedComment } from '../extractors/coderabbit-nitpicks.js';
+import { stateManager } from '../coordination/state.js';
 
 /**
  * Fetch CodeRabbit review bodies and extract nitpicks
@@ -163,8 +164,16 @@ export async function fetchAllThreads(
   // Merge nitpicks (only on first page fetch)
   const nitpicks = await nitpicksPromise;
   if (nitpicks.length > 0 && startCursor === null) {
+    const unresolvedNitpicks: ProcessedComment[] = [];
+    for (const n of nitpicks) {
+      const isResolved = await stateManager.isNitpickResolved(n.id);
+      if (!isResolved) {
+        unresolvedNitpicks.push(n);
+      }
+    }
+
     // Apply same filters to nitpicks
-    const filteredNitpicks = nitpicks.filter(comment => {
+    const filteredNitpicks = unresolvedNitpicks.filter(comment => {
       if (filter.resolved !== undefined && comment.resolved !== filter.resolved) return false;
       if (filter.outdated !== undefined && comment.outdated !== filter.outdated) return false;
       if (filter.file && !comment.file.includes(filter.file)) return false;
@@ -176,7 +185,7 @@ export async function fetchAllThreads(
     comments.unshift(...filteredNitpicks);
 
     // Adjust total count to include nitpicks
-    totalCount += nitpicks.length;
+    totalCount += unresolvedNitpicks.length;
   }
 
   const hasMore = comments.length >= maxItems;

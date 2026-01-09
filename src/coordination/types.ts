@@ -44,6 +44,11 @@ export interface PartitionResult {
   errors?: string[];
 }
 
+export interface NitpickResolution {
+  resolvedAt: string;
+  resolvedBy: string;
+}
+
 export interface AgentState {
   agentId: string;
   claimedFiles: string[];

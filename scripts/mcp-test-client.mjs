@@ -168,7 +168,7 @@ const TOOLS = {
       try {
         args.pr_info = JSON.parse(prInfoJson);
       } catch (e) {
-        throw new Error(`Invalid JSON for pr_info: ${e.message}`);
+        console.warn('[warning] Invalid pr_info JSON, ignoring:', e.message);
       }
     }
     return args;
@@ -179,7 +179,7 @@ const TOOLS = {
       try {
         args.result = JSON.parse(resultJson);
       } catch (e) {
-        throw new Error(`Invalid JSON for result: ${e.message}`);
+        console.warn('[warning] Invalid result JSON, ignoring:', e.message);
       }
     }
     return args;

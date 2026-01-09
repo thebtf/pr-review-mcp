@@ -40,36 +40,32 @@ async function initializeRun(
 ): Promise<string> {
   const octokit = getOctokit();
 
-  // 1. Get PR head SHA
-  const { data: prData } = await octokit.pulls.get({
-    owner,
-    repo,
-    pull_number: pr
-  });
-  const headSha = prData.head.sha;
-
-  // 2. Fetch all unresolved threads
-  // We focus on unresolved threads for "work"
-  const { comments } = await fetchAllThreads(client, owner, repo, pr, {
-    filter: { resolved: false },
-    maxItems: 500 // Reasonable limit
-  });
+  // 1. Fetch PR data and threads in parallel
+  const [prResponse, threadsResponse] = await Promise.all([
+    octokit.pulls.get({ owner, repo, pull_number: pr }),
+    fetchAllThreads(client, owner, repo, pr, {
+      filter: { resolved: false },
+      maxItems: 500 // Reasonable limit
+    })
+  ]);
+  const headSha = prResponse.data.head.sha;
+  const { comments } = threadsResponse;
 
   // 3. Group by file
-  const fileGroups = new Map<string, { comments: Set<string>, severity: Severity }>();
+  const fileGroups = new Map<string, { threadIds: Set<string>, severity: Severity }>();
 
   for (const comment of comments) {
     if (!comment.file) continue;
 
     const existingGroup = fileGroups.get(comment.file);
     const group = existingGroup ?? {
-      comments: new Set<string>(),
+      threadIds: new Set<string>(),
       // Initialize with the first comment's severity for this file
       severity: comment.severity as Severity
     };
 
     // Track unique thread IDs (O(1) with Set vs O(N) with Array.includes)
-    group.comments.add(comment.threadId);
+    group.threadIds.add(comment.threadId);
 
     // Update max severity for the file (only if we had an existing group)
     if (existingGroup) {
@@ -82,7 +78,7 @@ async function initializeRun(
   // 4. Create partitions
   const partitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
     file,
-    comments: Array.from(data.comments),
+    comments: Array.from(data.threadIds),
     severity: data.severity,
     status: 'pending'
   }));
@@ -128,7 +124,7 @@ export async function prClaimWork(
     const curr = currentRun.prInfo;
     if (curr.owner !== pr_info.owner || curr.repo !== pr_info.repo || curr.pr !== pr_info.pr) {
       throw new StructuredError(
-        'parse',
+        'permission',
         `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR.`,
         false  // Validation error - not retryable
       );
@@ -150,11 +146,11 @@ export async function prClaimWork(
   };
 }
 
-export async function prReportProgress(
+export function prReportProgress(
   input: ReportProgressInput
 ) {
   const { agent_id, file, status, result } = input;
-  
+
   const success = stateManager.reportProgress(agent_id, file, status, result);
 
   if (!success) {
@@ -171,7 +167,7 @@ export async function prReportProgress(
   };
 }
 
-export async function prGetWorkStatus(
+export function prGetWorkStatus(
   input: GetWorkStatusInput
 ) {
   // We currently ignore run_id in input as we only support singleton active run

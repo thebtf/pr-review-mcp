@@ -7,6 +7,7 @@ import { GitHubClient } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
+import { stateManager } from '../coordination/state.js';
 import type { SummaryInput, SummaryOutput } from '../github/types.js';
 
 export const SummaryInputSchema = z.object({
@@ -34,6 +35,9 @@ export async function prSummary(
   ]);
 
   const { comments, totalCount } = threadsResult;
+  const unresolvedNitpicks = comments.filter(c => c.threadId.startsWith('coderabbit-nitpick-'));
+  const resolvedNitpicksCount = stateManager.getResolvedNitpicksCount();
+  const totalNitpicksCount = unresolvedNitpicks.length + resolvedNitpicksCount;
 
   // Get Qodo comments with resolved status from tracker
   const qodoComments = qodoReview ? qodoToNormalizedComments(qodoReview) : [];
@@ -72,6 +76,15 @@ export async function prSummary(
     unresolved: allUnresolved.length,
     outdated: comments.filter(c => c.outdated).length,
     bySeverity,
-    byFile
+    byFile,
+    ...(totalNitpicksCount > 0
+      ? {
+          nitpicks: {
+            total: totalNitpicksCount,
+            resolved: resolvedNitpicksCount,
+            unresolved: unresolvedNitpicks.length
+          }
+        }
+      : {})
   };
 }

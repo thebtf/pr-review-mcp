@@ -148,6 +148,11 @@ export interface SummaryOutput {
   outdated: number;
   bySeverity: Record<string, number>;
   byFile: Record<string, number>;
+  nitpicks?: {
+    total: number;
+    resolved: number;
+    unresolved: number;
+  };
 }
 
 export interface ListFilter {
@@ -215,9 +220,11 @@ export interface ResolveInput {
 
 export interface ResolveOutput {
   success: boolean;
-  threadId: string;
-  file: string;
-  title: string;
+  threadId?: string;
+  file?: string;
+  title?: string;
+  synthetic?: boolean;
+  message?: string;
 }
 
 export interface ChangesInput {

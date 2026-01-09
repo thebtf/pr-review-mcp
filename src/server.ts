@@ -461,8 +461,7 @@ export class PRReviewMCPServer {
               type: 'object',
               properties: {
                 run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
-              },
-              required: []
+              }
             }
           }
         ] as Tool[]
