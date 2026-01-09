@@ -175,7 +175,13 @@ export async function prGetWorkStatus(
   input: GetWorkStatusInput
 ) {
   // We currently ignore run_id in input as we only support singleton active run
-  return stateManager.getStatus();
+  const status = stateManager.getStatus();
+
+  return {
+    ...status,
+    isActive: stateManager.isRunActive(),
+    runAge: stateManager.getRunAge()
+  };
 }
 
 // Export schemas for registration

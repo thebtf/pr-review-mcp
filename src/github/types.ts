@@ -72,6 +72,23 @@ export interface UnresolveThreadData {
   };
 }
 
+export interface PRReview {
+  id: string;
+  body: string;
+  state: string;
+  author: Author | null;
+}
+
+export interface ListReviewsData {
+  repository: {
+    pullRequest: {
+      reviews: {
+        nodes: PRReview[];
+      };
+    } | null;
+  } | null;
+}
+
 export interface GraphQLError {
   type?: string;
   message: string;

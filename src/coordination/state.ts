@@ -222,6 +222,21 @@ class CoordinationStateManager {
   public getCurrentRun() {
     return this.currentRun;
   }
+
+  /**
+   * Check if there's an active (non-completed) run
+   */
+  isRunActive(): boolean {
+    return this.currentRun !== null && !this.currentRun.completedAt;
+  }
+
+  /**
+   * Get run age in milliseconds (or null if no run)
+   */
+  getRunAge(): number | null {
+    if (!this.currentRun) return null;
+    return Date.now() - new Date(this.currentRun.startedAt).getTime();
+  }
 }
 
 export const stateManager = new CoordinationStateManager();
