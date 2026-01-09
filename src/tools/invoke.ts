@@ -57,6 +57,7 @@ interface RepoConfig {
 
 /**
  * Get file content from repository via Octokit
+ * Handles all GitHub Content API response types properly
  */
 async function getFileContent(
   owner: string,
@@ -71,11 +72,16 @@ async function getFileContent(
       path
     });
 
-    // Content is base64 encoded for files
-    if ('content' in data && data.content) {
-      return Buffer.from(data.content, 'base64').toString('utf-8');
-    }
-    return null;
+    // Can be a directory listing
+    if (Array.isArray(data)) return null;
+
+    // Only files have base64 content
+    if (data.type !== 'file') return null;
+    if (!('content' in data) || !data.content) return null;
+    // Handle encoding: base64 for normal files, 'none' for 1-100MB files
+    if ('encoding' in data && data.encoding !== 'base64') return null;
+
+    return Buffer.from(data.content, 'base64').toString('utf-8');
   } catch {
     return null;
   }

@@ -172,11 +172,22 @@ Invoke AI code review agents.
   "owner": "thebtf",
   "repo": "novascript",
   "pr": 99,
-  "agents": ["coderabbit", "sourcery", "qodo"]
+  "agent": "all"
 }
 ```
 
-Supported agents: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`
+Single agent:
+```json
+{
+  "owner": "thebtf",
+  "repo": "novascript",
+  "pr": 99,
+  "agent": "coderabbit",
+  "options": { "focus": "security" }
+}
+```
+
+Supported agents: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`, or `all`
 
 ## Workflow Prompt
 
