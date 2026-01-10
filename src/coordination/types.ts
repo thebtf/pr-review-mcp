@@ -9,7 +9,8 @@ export const ClaimWorkSchema = z.object({
     owner: z.string().min(1),
     repo: z.string().min(1),
     pr: z.number().int().positive()
-  }).optional()
+  }).optional(),
+  force: z.boolean().optional()
 });
 
 export const ReportProgressSchema = z.object({

@@ -157,7 +157,7 @@ export async function prClaimWork(
   input: ClaimWorkInput,
   client: GitHubClient
 ) {
-  const { agent_id, pr_info } = input;
+  const { agent_id, pr_info, force } = input;
 
   const isActive = stateManager.isRunActive();
   const currentRun = stateManager.getCurrentRun();
@@ -185,15 +185,27 @@ export async function prClaimWork(
 
     if (isDifferentPR) {
       // Different PR requested
-      if (isActive) {
-        // Current run is still active - cannot replace
+      // Check if truly active (no completedAt) vs. reopened by refresh
+      const hasCompletedAt = !!currentRun.completedAt;
+
+      // Auto-allow replacement if run is old (>5 minutes) - workers complete quickly
+      const runAge = stateManager.getRunAge();
+      const OLD_RUN_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+      const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD) || hasCompletedAt;
+
+      if (isActive && !force && !autoForce) {
+        // Current run is still active - cannot replace (unless forced or old/completed)
         throw new StructuredError(
           'permission',
-          `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR.`,
+          `Active run exists for ${curr.owner}/${curr.repo}#${curr.pr}, cannot claim for different PR. Use force=true to override.`,
           false
         );
       }
-      // Current run completed - safe to replace
+      // Current run completed OR force=true OR old run - safe to replace
+      if ((force || autoForce) && isActive) {
+        const reason = hasCompletedAt ? 'previously completed' : 'old';
+        console.warn(`[coordination] Force-replacing active run ${currentRun.runId} (${reason}) for ${curr.owner}/${curr.repo}#${curr.pr}`);
+      }
       needsInit = true;
     }
   } else if (!isActive) {
