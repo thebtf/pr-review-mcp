@@ -188,7 +188,8 @@ const TOOLS = {
     const args = {};
     if (runId && runId !== 'null') args.run_id = runId;
     return args;
-  }
+  },
+  pr_reset_coordination: () => ({ confirm: true })
 };
 
 // Helper to safely extract result text
@@ -316,7 +317,7 @@ async function quickCall(client, tool, args) {
     pr_summary: 1, pr_list: 1, pr_get: 2, pr_resolve: 2, pr_changes: 1,
     pr_invoke: 1, pr_poll_updates: 1, pr_labels: 3, pr_reviewers: 3,
     pr_create: 1, pr_merge: 1, pr_review_cycle: 1,
-    pr_claim_work: 1, pr_report_progress: 3, pr_get_work_status: 0
+    pr_claim_work: 1, pr_report_progress: 3, pr_get_work_status: 0, pr_reset_coordination: 0
   };
   const required = minArgs[tool] || 0;
   if (args.length < required) {

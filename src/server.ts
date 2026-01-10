@@ -32,13 +32,16 @@ import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
+import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
 import {
   prClaimWork,
   prReportProgress,
   prGetWorkStatus,
+  prResetCoordination,
   ClaimWorkSchema,
   ReportProgressSchema,
-  GetWorkStatusSchema
+  GetWorkStatusSchema,
+  ResetCoordinationSchema
 } from './tools/coordination.js';
 import { getInvokableAgentIds } from './agents/registry.js';
 
@@ -218,6 +221,20 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' }
               },
               required: ['owner', 'repo', 'pr']
+            }
+          },
+          {
+            name: 'pr_list_prs',
+            description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                state: { type: 'string', enum: ['OPEN', 'CLOSED', 'MERGED', 'all'], description: 'PR state filter (default: OPEN)' },
+                limit: { type: 'number', description: 'Max PRs to return (default: 20, max: 100)' }
+              },
+              required: ['owner', 'repo']
             }
           },
           {
@@ -428,7 +445,8 @@ export class PRReviewMCPServer {
                   },
                   required: ['owner', 'repo', 'pr'],
                   description: 'PR info (required if no active run)'
-                }
+                },
+                force: { type: 'boolean', description: 'Force replace active run (use with caution)' }
               },
               required: ['agent_id']
             }
@@ -462,6 +480,17 @@ export class PRReviewMCPServer {
               properties: {
                 run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
               }
+            }
+          },
+          {
+            name: 'pr_reset_coordination',
+            description: 'Reset/clear the current coordination run (use with caution)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                confirm: { type: 'boolean', const: true, description: 'Must be true to confirm reset (safety guard)' }
+              },
+              required: ['confirm']
             }
           }
         ] as Tool[]
@@ -500,6 +529,7 @@ export class PRReviewMCPServer {
 
     const toolHandlers: Record<string, ToolHandler> = {
       'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
+      'pr_list_prs': createToolHandler(ListPRsInputSchema, prListPRs),
       'pr_list': createToolHandler(ListInputSchema, prList),
       'pr_get': createToolHandler(GetInputSchema, prGet),
       'pr_resolve': createToolHandler(ResolveInputSchema, prResolveWithContext),
@@ -512,7 +542,8 @@ export class PRReviewMCPServer {
       'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
       'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
       'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
-      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus)
+      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus),
+      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination)
     };
 
     // Handle tool calls

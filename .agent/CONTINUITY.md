@@ -1,16 +1,16 @@
 # Continuity — PR Review MCP Server
 
-## Current State (2026-01-09)
+## Current State (2026-01-10)
 
-### Branch: `feat/pr-review-mcp-server`
+### Branch: `main` (PR #3 merged)
 
 ### What's Done
 
 1. **Core MCP Server** — 9 tools working:
-   - `pr_summary` — statistics with multi-source support
+   - `pr_summary` — statistics with multi-source support + nitpicks block
    - `pr_list` — filtering by resolved/file/source
    - `pr_get` — full comment details + AI prompt
-   - `pr_resolve` — mark threads resolved
+   - `pr_resolve` — mark threads resolved (supports synthetic IDs)
    - `pr_changes` — cursor pagination
    - `pr_invoke` — invoke agents (CodeRabbit, Sourcery, Qodo)
    - `pr_claim_work` — claim file partition for parallel processing
@@ -29,25 +29,53 @@
    - Atomic claim operations with ownership verification
    - Stale agent cleanup (5min timeout)
 
-4. **Skills** — `D:/Dev/agent-skills/`:
+4. **Hybrid Nitpicks Tracking** — NEW:
+   - In-memory Map + file persistence (`nitpicks-{owner}-{repo}-{pr}.json`)
+   - Synthetic ID handling: `coderabbit-nitpick-*`
+   - Atomic file writes via temp-file + rename
+   - Lazy load on first PR access
+   - Filter resolved nitpicks from pr_list output
+   - Nitpicks block in pr_summary response
+
+5. **Confidence Layer** — NEW in pr-review-worker:
+   - ALWAYS/CONDITIONAL/NEVER keyword classification
+   - Full investigation for security/auth/injection keywords
+   - Light investigation for type/interface/performance
+   - Skip investigation for formatting/style/naming
+   - Tech debt recording to `.agent/status/TECHNICAL_DEBT.md`
+
+6. **Skills** — `claude/skills/`:
    - `pr-review-orchestrator/SKILL.md` — Spawns workers, monitors progress, manages labels
    - `pr-review-worker/SKILL.md` — Claims partitions, fixes comments, reports progress
    - Both use proper frontmatter: `context: fork`, `agent: background`, `model: sonnet`
    - Worker forbidden from: labels, merge, invoke (orchestrator only)
 
-5. **Qodo Adapter** — `src/adapters/qodo.ts`:
+7. **Qodo Adapter** — `src/adapters/qodo.ts`:
    - Fetches Qodo's persistent issue comment
    - Parses security concerns → CRIT severity
    - Parses focus areas → MAJOR severity
 
-6. **Test Client** — `scripts/mcp-test-client.mjs`:
+8. **Test Client** — `scripts/mcp-test-client.mjs`:
    - Interactive and quick-call modes
    - Correct MCP protocol (newline-delimited JSON)
 
 ### Tested Successfully
 
-- PR #3 coordination run: 4/4 partitions completed by 3 parallel workers
+- PR #3: 28/28 comments resolved, 30/30 nitpicks resolved
+- 4 parallel workers completed 5/5 partitions in ~3.5 min
+- Hybrid nitpicks tracking working with file persistence
 - Label coordination: only orchestrator manages `ai-review:*` labels
+
+---
+
+## Now
+
+Adding Qodo Focus tracking (similar to CodeRabbit nitpicks) for synthetic IDs `qodo-focus-*`.
+
+## Next
+
+- Test round-robin review with CodeRabbit, Codex, Copilot
+- Implement Qodo Focus body extraction (currently empty)
 
 ---
 
@@ -79,32 +107,13 @@
 
 ---
 
-## Parallel Processing Methodology
+## Synthetic ID Tracking
 
-### Skills Location
-- Orchestrator: `D:/Dev/agent-skills/pr-review-orchestrator/SKILL.md`
-- Worker: `D:/Dev/agent-skills/pr-review-worker/SKILL.md`
-
-### Spawning Workers
-```javascript
-Task({
-  subagent_type: "general-purpose",
-  run_in_background: true,
-  model: "sonnet",  // CRITICAL: avoid opus token waste
-  prompt: "Use skill pr-review-worker. agent_id=worker-N. owner=ORG repo=REPO pr=NUM"
-})
-```
-
-### Label Coordination
-- **Only orchestrator** manages `ai-review:*` labels
-- Workers have `pr_labels` removed from allowed-tools
-- Prevents conflicting label states
-
----
-
-## Test PR
-
-`thebtf/pr-review-mcp#3` — Coordination testing PR
+| Prefix | Source | Tracking |
+|--------|--------|----------|
+| `coderabbit-nitpick-*` | CodeRabbit inline nitpicks | Hybrid (memory + file) |
+| `qodo-focus-*` | Qodo Focus areas | Hybrid (memory + file) |
+| `qodo-security-*` | Qodo Security concerns | Hybrid (memory + file) |
 
 ---
 
@@ -134,3 +143,4 @@ node scripts/mcp-test-client.mjs pr_report_progress agent1 src/file.ts done
 | Labels via orchestrator only | Prevent conflicting label states |
 | In-memory state | Simple, no persistence needed for single run |
 | Stale timeout 5min | Balance between reliability and stuck claims |
+| Hybrid nitpicks tracking | In-memory + file for persistence across sessions |

@@ -3,7 +3,7 @@
  */
 
 export interface GraphQLVariables {
-  [key: string]: string | number | boolean | null | undefined;
+  [key: string]: string | number | boolean | null | undefined | string[];
 }
 
 export interface PageInfo {

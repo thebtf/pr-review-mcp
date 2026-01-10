@@ -43,10 +43,12 @@ class CoordinationStateManager {
     headSha: string,
     partitions: FilePartition[]
   ): string {
-    if (this.currentRun && !this.currentRun.completedAt) {
+    if (this.currentRun) {
+      const status = this.currentRun.completedAt ? 'completed' : 'active';
       console.warn(
-        `[coordination] Overwriting active run ${this.currentRun.runId} for ` +
-        `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr}`
+        `[coordination] Replacing ${status} run ${this.currentRun.runId} for ` +
+        `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr} ` +
+        `with new run for ${prInfo.owner}/${prInfo.repo}#${prInfo.pr}`
       );
     }
 
@@ -179,7 +181,7 @@ class CoordinationStateManager {
     }));
 
     return {
-      active: true,
+      active: !this.currentRun.completedAt, // active only if not completed
       runId: this.currentRun.runId,
       prInfo: this.currentRun.prInfo,
       progress: counts,
@@ -362,6 +364,43 @@ class CoordinationStateManager {
    */
   resetRun(): void {
     this.currentRun = null;
+  }
+
+  /**
+   * Add new partitions to an existing run (for dynamic partition refresh)
+   * Only adds partitions for files that don't already exist in the run
+   * Reopens the run if it was completed
+   * @returns Number of new partitions added
+   */
+  addPartitions(partitions: FilePartition[]): number {
+    if (!this.currentRun) return 0;
+
+    let added = 0;
+    for (const p of partitions) {
+      // Only add if file doesn't already have a partition
+      if (!this.currentRun.partitions.has(p.file)) {
+        this.currentRun.partitions.set(p.file, { ...p, status: 'pending' });
+        added++;
+      }
+    }
+
+    // Reopen run if it was completed and we added new work
+    if (added > 0 && this.currentRun.completedAt) {
+      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added ${added} new partitions`);
+      this.currentRun.completedAt = undefined;
+    }
+
+    return added;
+  }
+
+  /**
+   * Check if all current partitions are done/failed (for refresh check)
+   */
+  allPartitionsDone(): boolean {
+    if (!this.currentRun) return true;
+    return Array.from(this.currentRun.partitions.values()).every(
+      p => p.status === 'done' || p.status === 'failed'
+    );
   }
 }
 

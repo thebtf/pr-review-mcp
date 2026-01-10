@@ -86,5 +86,44 @@ export const QUERIES = {
         }
       }
     }
+  `,
+
+  /**
+   * List all pull requests in a repository
+   */
+  listPullRequests: `
+    query($owner: String!, $repo: String!, $states: [PullRequestState!], $first: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(states: $states, first: $first, after: $cursor, orderBy: {field: CREATED_AT, direction: DESC}) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          totalCount
+          nodes {
+            number
+            title
+            state
+            isDraft
+            createdAt
+            updatedAt
+            author { login }
+            baseRefName
+            headRefName
+            mergeable
+            reviewDecision
+            additions
+            deletions
+            changedFiles
+            reviewThreads {
+              totalCount
+            }
+            comments {
+              totalCount
+            }
+          }
+        }
+      }
+    }
   `
 } as const;

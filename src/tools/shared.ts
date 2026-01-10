@@ -14,11 +14,16 @@ import type {
 } from '../github/types.js';
 import { extractPrompt, extractTitle, truncateBody } from '../extractors/prompt.js';
 import { extractSeverity } from '../extractors/severity.js';
-import { parseNitpicksFromReviewBody, nitpickToProcessedComment } from '../extractors/coderabbit-nitpicks.js';
+import {
+  parseNitpicksFromReviewBody,
+  nitpickToProcessedComment,
+  parseOutsideDiffComments,
+  outsideDiffToProcessedComment
+} from '../extractors/coderabbit-nitpicks.js';
 import { stateManager } from '../coordination/state.js';
 
 /**
- * Fetch CodeRabbit review bodies and extract nitpicks
+ * Fetch CodeRabbit review bodies and extract nitpicks + outside diff range comments
  */
 async function fetchCodeRabbitNitpicks(
   client: GitHubClient,
@@ -45,8 +50,16 @@ async function fetchCodeRabbitNitpicks(
       parseNitpicksFromReviewBody(review.id, review.body)
     );
 
-    // Convert to ProcessedComment format
-    return allNitpicks.map(nitpickToProcessedComment);
+    // Extract outside diff range comments from each review body
+    const allOutsideDiff = coderabbitReviews.flatMap(review =>
+      parseOutsideDiffComments(review.id, review.body)
+    );
+
+    // Convert to ProcessedComment format and combine
+    return [
+      ...allNitpicks.map(nitpickToProcessedComment),
+      ...allOutsideDiff.map(outsideDiffToProcessedComment)
+    ];
   } catch (error) {
     // Silently fail - nitpicks are a bonus, not critical
     console.error('Failed to fetch CodeRabbit nitpicks:', error);

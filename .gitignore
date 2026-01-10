@@ -17,3 +17,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+nul
+
+# Agent session data (nitpicks tracking, tech debt)
+.agent/status/

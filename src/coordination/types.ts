@@ -9,7 +9,8 @@ export const ClaimWorkSchema = z.object({
     owner: z.string().min(1),
     repo: z.string().min(1),
     pr: z.number().int().positive()
-  }).optional()
+  }).optional(),
+  force: z.boolean().optional()
 });
 
 export const ReportProgressSchema = z.object({
@@ -25,6 +26,10 @@ export const ReportProgressSchema = z.object({
 
 export const GetWorkStatusSchema = z.object({
   run_id: z.string().optional()
+});
+
+export const ResetCoordinationSchema = z.object({
+  confirm: z.literal(true)
 });
 
 // TypeScript interfaces
@@ -69,3 +74,4 @@ export interface CoordinationState {
 export type ClaimWorkInput = z.infer<typeof ClaimWorkSchema>;
 export type ReportProgressInput = z.infer<typeof ReportProgressSchema>;
 export type GetWorkStatusInput = z.infer<typeof GetWorkStatusSchema>;
+export type ResetCoordinationInput = z.infer<typeof ResetCoordinationSchema>;
