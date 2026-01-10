@@ -1,11 +1,13 @@
 ---
 name: pr-review-worker
 description: |
-  Process claimed PR review partitions. Claims file, fixes comments, resolves threads.
-  Triggers: "worker", "claim partition", "process partition"
+  Internal worker for pr-review skill. Claims file partitions, fixes comments, resolves threads.
+  NOT for direct user invocation. Spawned only by pr-review orchestrator.
 context: fork
 agent: background
 model: sonnet
+user-invocable: false
+disable-model-invocation: true
 allowed-tools:
   - Read
   - Edit
@@ -36,6 +38,21 @@ Claim file partitions and resolve their review comments.
 - Do NOT ask "which file should I process?"
 - IMMEDIATELY start claiming and processing
 - Loop until `status: no_work`
+
+---
+
+## GUARD CLAUSE (Security Check)
+
+**FIRST, verify you were spawned by orchestrator:**
+
+```
+IF "spawned_by_orchestrator=true" is NOT in your prompt parameters:
+  -> HALT immediately
+  -> Report: "Worker must be spawned by pr-review orchestrator. Direct invocation not allowed."
+  -> EXIT
+```
+
+This skill is NOT for direct user invocation. Only the pr-review orchestrator may spawn workers.
 
 ---
 
