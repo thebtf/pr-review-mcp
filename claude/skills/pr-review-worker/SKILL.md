@@ -24,32 +24,62 @@ allowed-tools:
 
 # PR Review Worker
 
-**HANDOFF:** This worker is spawned by pr-review-orchestrator. Begin workflow IMMEDIATELY with the parameters provided in the spawn prompt.
+Claim file partitions and resolve their review comments.
 
-Use this skill to claim file partitions and resolve their review comments.
-Each partition contains a file path and a list of thread IDs.
+---
 
-## Inputs
-- agent_id (unique per worker, e.g., "worker-1")
-- owner, repo, pr (needed on first claim to initialize the run)
+## EXECUTION MODE: NON-INTERACTIVE
+
+**This skill runs AUTONOMOUSLY. Execute until no_work.**
+
+- Do NOT ask user for confirmation
+- Do NOT ask "which file should I process?"
+- IMMEDIATELY start claiming and processing
+- Loop until `status: no_work`
+
+---
+
+## Inputs (REQUIRED)
+
+| Input | Source | Example |
+|-------|--------|---------|
+| `agent_id` | From orchestrator prompt | `worker-1` |
+| `owner` | From orchestrator prompt | `thebtf` |
+| `repo` | From orchestrator prompt | `novascript` |
+| `pr` | From orchestrator prompt | `100` |
+
+**Parse these from the prompt that spawned you. Do NOT ask user.**
+
+---
 
 ## Workflow
-1. **CLAIM (FIRST ACTION):** Call pr_claim_work IMMEDIATELY with agent_id and pr_info.
-   - First claim: include `pr_info: {owner, repo, pr}` to initialize the run
-   - Subsequent claims: omit pr_info (run already initialized)
-2. **PROCESS:** For each thread id in partition.comments:
-   - **READ:** Call `Read` on the partition file path first
-   - **FETCH:** pr_get to fetch details and aiPrompt (if present)
-   - Apply the fix, verify locally, then pr_resolve with threadId
-3. **REPORT:** pr_report_progress with status and counts for the file.
-4. **REPEAT:** Claim another partition until status=no_work.
-   - **BACKOFF POLICY:** If status=no_work, wait 30s and retry once. After 2 consecutive no_work responses, EXIT gracefully.
 
-### 2b. CONFIDENCE LAYER (One-Hop Investigation)
+### Step 1: CLAIM PARTITION
+```
+pr_claim_work {
+  agent_id: "worker-1",
+  pr_info: { owner: "OWNER", repo: "REPO", pr: PR_NUMBER }
+}
+```
 
-After pr_get, before applying fix, classify the comment:
+Response:
+- `status: "claimed"` -> proceed to Step 2
+- `status: "no_work"` -> proceed to Step 4 (FINAL BUILD & TEST)
 
-**CLASSIFY** comment body for trigger keywords:
+**-> IMMEDIATELY proceed to Step 2 if claimed**
+
+### Step 2: PROCESS EACH THREAD
+
+For each `threadId` in `partition.comments`:
+
+#### 2a. GET COMMENT DETAILS
+```
+pr_get { owner, repo, pr, id: threadId }
+```
+
+#### 2b. CONFIDENCE CHECK (One-Hop Investigation)
+
+**Classify comment for trigger keywords:**
 
 | Category | Keywords | Action |
 |----------|----------|--------|
@@ -57,57 +87,123 @@ After pr_get, before applying fix, classify the comment:
 | CONDITIONAL | type, interface, performance, pattern, refactor | Light investigation |
 | NEVER | formatting, style, naming, typo, comment, whitespace | Skip investigation |
 
-**IF ALWAYS (full investigation):**
+**IF ALWAYS:**
 1. Read full affected file
-2. Grep for direct callers: `Grep pattern="functionName" path="src/" output_mode="content" -C=3`
-3. LSP goToDefinition if external call present
-4. Analyze: "Is there a deeper issue behind this comment?"
+2. `Grep pattern="functionName" path="src/" output_mode="content" -C=3`
+3. `LSP goToDefinition` if external call present
+4. Analyze: "Is there a deeper issue?"
 
-**IF CONDITIONAL (light investigation):**
-1. Read ±50 lines around the change
-2. Quick analysis: obvious deeper issue?
+**IF CONDITIONAL:**
+1. Read +/-50 lines around change
+2. Quick analysis
 
-**IF deeper issue found:**
-Append to `.agent/status/TECHNICAL_DEBT.md`:
+**IF deeper issue found:** Append to `.agent/status/TECHNICAL_DEBT.md`:
 ```markdown
 ## [DATE] <file>:<line>
-
-**Comment:** <reviewer's comment summary>
+**Comment:** <summary>
 **Deeper issue:** <what you discovered>
-**Root cause:** <analysis of why this exists>
+**Root cause:** <analysis>
 **Category:** security | performance | architecture | error-handling
 ```
+Continue with original fix - do NOT block on tech debt.
 
-Continue with original fix - do NOT block on tech debt discovery.
+#### 2c. APPLY FIX
+- Execute `aiPrompt` if present
+- Otherwise follow comment body and repo conventions
+- Verify fix compiles
 
-## Handling Qodo comments
-pr_get may return canResolve=false for Qodo.
-pr_resolve accepts threadId values starting with "qodo-" and handles tracker updates.
-
-## Example tool calls
-```json
-{"tool":"pr_claim_work","input":{"agent_id":"worker-1","pr_info":{"owner":"ORG","repo":"REPO","pr":123}}}
+#### 2d. RESOLVE THREAD
+```
+pr_resolve { owner, repo, pr, threadId: "THREAD_ID" }
 ```
 
-```json
-{"tool":"pr_get","input":{"owner":"ORG","repo":"REPO","pr":123,"id":"THREAD_OR_COMMENT_ID"}}
+**-> IMMEDIATELY process next thread**
+
+### Step 3: REPORT PROGRESS
+```
+pr_report_progress {
+  agent_id: "worker-1",
+  file: "src/app.ts",
+  status: "done",
+  result: { commentsProcessed: 4, commentsResolved: 3, errors: [] }
+}
 ```
 
-```json
-{"tool":"pr_resolve","input":{"owner":"ORG","repo":"REPO","pr":123,"threadId":"THREAD_ID_OR_QODO_ID"}}
+**-> IMMEDIATELY return to Step 1 (claim next partition)**
+
+### Step 4: FINAL BUILD & TEST (Before Exit)
+
+**MANDATORY: When `status: no_work` (no more partitions), run build/test before exiting.**
+
+```bash
+# Detect project type and run appropriate build
+npm run build   # Node.js/TypeScript
+dotnet build    # .NET
+cargo build     # Rust
+go build ./...  # Go
 ```
 
-```json
-{"tool":"pr_report_progress","input":{"agent_id":"worker-1","file":"src/app.ts","status":"done","result":{"commentsProcessed":4,"commentsResolved":3,"errors":[]}}}
+**If build fails:**
+1. Analyze error output
+2. Fix compilation errors in files you modified
+3. Re-run build until success
+4. **DO NOT exit with broken build**
+
+**If tests available:**
+```bash
+npm test        # or: dotnet test, cargo test, go test ./...
 ```
 
-## Notes
-- Use threadId from pr_get for pr_resolve.
-- If aiPrompt is missing, follow the comment body and repo conventions.
-- If pr_claim_work returns status=no_work, stop or back off before retrying.
+- Fix any test failures caused by your changes
+- If test fails in unrelated code, note in report but don't block
+
+**Then EXIT gracefully.**
+
+---
+
+## Handling Special Cases
+
+### Qodo Comments
+- `pr_get` may return `canResolve: false`
+- `pr_resolve` accepts `threadId` starting with `"qodo-"`
+- MCP handles tracker updates internally
+
+### Missing aiPrompt
+- Follow comment body literally
+- Use repo conventions for style
+- When uncertain, make minimal safe change
+
+---
 
 ## FORBIDDEN
-- **NO LABELS** — workers must NOT set/remove labels. Only orchestrator manages labels.
-- **NO MERGE** — workers never call pr_merge.
-- **NO INVOKE** — workers don't invoke other review agents.
-- **NO BLOCKING on tech debt** — record and continue with the fix
+
+```
+X pr_labels - only orchestrator manages labels
+X pr_merge - workers never merge
+X pr_invoke - workers don't invoke other agents
+X Asking user which file to process
+X Asking user how to fix a comment
+X Blocking on tech debt (record and continue)
+X Exiting with broken build
+```
+
+---
+
+## Example Session
+
+```
+1. pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
+2. pr_get { id: "t1" } -> { body: "Add null check", aiPrompt: "..." }
+3. Read src/App.tsx
+4. Edit: add null check
+5. pr_resolve { threadId: "t1" }
+6. pr_get { id: "t2" } -> ...
+7. ... fix and resolve ...
+8. pr_report_progress { file: "src/App.tsx", status: "done" }
+9. pr_claim_work -> status: claimed, partition: { file: "src/utils.ts", ... }
+10. ... continue ...
+11. pr_claim_work -> status: no_work
+12. npm run build -> success
+13. npm test -> success
+14. EXIT
+```

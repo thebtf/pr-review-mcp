@@ -43,6 +43,7 @@ Multi-agent PR review orchestrator. Runs as background agent until all comments 
 | **HUMAN GATE** | All merges require explicit user approval |
 | **ESCAPE HATCH** | Stop immediately if `pause-ai-review` label present |
 | **FIX ALL** | Process ALL comments regardless of severity. No skipping. |
+| **BUILD MUST PASS** | Never finish with broken build or failing tests. |
 | **OUT OF SCOPE** | Never dismiss as "out of scope" without action. See below. |
 
 ---
@@ -50,26 +51,29 @@ Multi-agent PR review orchestrator. Runs as background agent until all comments 
 ## State Machine
 
 ```
-INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
-                                         ↓
-                    ┌────────────────────┴────────────────────┐
-                    │                                         │
+INIT -> CHECK_ESCAPE -> INVOKE_AGENTS -> POLL_WAIT
+                                         |
+                    +--------------------+--------------------+
+                    |                                         |
               allAgentsReady?                           pause label?
-                    │                                         │
-              ┌─────┴─────┐                              STOP (user)
+                    |                                         |
+              +-----+-----+                              STOP (user)
               no          yes
-              ↓            ↓
+              |            |
            (wait)    unresolved > 0?
-                          │
-                    ┌─────┴─────┐
+                          |
+                    +-----+-----+
                     yes         no
-                    ↓            ↓
-             PROCESS_COMMENTS  SUCCESS → READY_REPORT
-                    │
-                    ↓
+                    |            |
+             PROCESS_COMMENTS  BUILD_TEST -> SUCCESS -> READY_REPORT
+                    |
+                    v
              (fixes pushed)
-                    │
-                    └──→ POLL_WAIT (re-review cycle)
+                    |
+                    v
+              BUILD_TEST
+                    |
+                    +---> POLL_WAIT (re-review cycle)
 ```
 
 ---
@@ -88,10 +92,10 @@ INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
 
 ```
 1. Check pause label:
-   - If 'pause-ai-review' present → STOP, report "Paused by user"
+   - If 'pause-ai-review' present -> STOP, report "Paused by user"
 
 2. Check PR state:
-   - If closed/merged → STOP, report "PR closed externally"
+   - If closed/merged -> STOP, report "PR closed externally"
 ```
 
 ### Phase 3: Review Cycle
@@ -101,7 +105,7 @@ INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
    - mode: sequential | parallel | round-robin
    - agents: [coderabbit, gemini, codex, sourcery, qodo, copilot]
 
-2. Start cycle → record timestamp for polling
+2. Start cycle -> record timestamp for polling
 ```
 
 ### Phase 4: Poll & Wait
@@ -110,14 +114,14 @@ INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
 1. Poll every 30s: pr_poll_updates { include: ["comments", "agents"] }
 
 2. Check agent status:
-   - allAgentsReady: false → wait, agents still reviewing
-   - pendingAgents: [...] → shows which agents not finished
+   - allAgentsReady: false -> wait, agents still reviewing
+   - pendingAgents: [...] -> shows which agents not finished
 
-3. If new commits → wait for re-review (agents will re-analyze)
+3. If new commits -> wait for re-review (agents will re-analyze)
 
-4. If allAgentsReady: true AND has unresolved → proceed to Phase 5
+4. If allAgentsReady: true AND has unresolved -> proceed to Phase 5
 
-5. If allAgentsReady: true AND unresolved === 0 → COMPLETE
+5. If allAgentsReady: true AND unresolved === 0 -> proceed to Phase 6 (Build & Test)
 ```
 
 ### Phase 5: Process Comments
@@ -134,10 +138,40 @@ INIT → CHECK_ESCAPE → INVOKE_AGENTS → POLL_WAIT
 NO SKIPPING. Every comment must be fixed.
 
 3. After all current comments resolved:
-   → Return to Phase 4 (Poll & Wait)
-   → Agents may re-review and add NEW comments
-   → Loop continues until: allAgentsReady AND unresolved === 0
+   -> Proceed to Phase 6 (Build & Test)
 ```
+
+### Phase 6: BUILD & TEST (MANDATORY)
+
+**Run after every round of fixes, before returning to poll or completing.**
+
+```bash
+# Detect project type and run build
+npm run build   # Node.js/TypeScript
+dotnet build    # .NET
+cargo build     # Rust
+go build ./...  # Go
+```
+
+**If build fails:**
+1. Analyze error output
+2. Fix compilation errors caused by your changes
+3. Re-run build until success
+4. **DO NOT proceed with broken build**
+
+**Run tests:**
+```bash
+npm test        # or: dotnet test, cargo test, go test ./...
+```
+
+**If tests fail:**
+1. Identify failing tests
+2. If failure is caused by changes made during review -> fix it
+3. If failure is pre-existing -> note in report, continue
+
+**Then:**
+- If more agents reviewing -> return to Phase 4 (Poll & Wait)
+- If all agents done AND unresolved === 0 -> proceed to Phase 8 (Completion)
 
 ### Handling "Out of Scope" Comments
 
@@ -160,7 +194,7 @@ If a comment requires work beyond current PR scope:
 NEVER just say "out of scope" without adding tech debt entry.
 ```
 
-### Phase 6: Advance & Loop
+### Phase 7: Advance & Loop
 
 ```
 1. Advance to next agent (sequential/round-robin)
@@ -168,13 +202,14 @@ NEVER just say "out of scope" without adding tech debt entry.
 3. Loop back to Phase 2
 ```
 
-### Phase 7: Completion
+### Phase 8: Completion
 
 ```
-1. Get final statistics
-2. Set label: ai-review:passed | ai-review:needs-attention
-3. Report to user (DO NOT MERGE):
-   "PR Review Complete. Ready for human review."
+1. Run FINAL build and test verification
+2. Get final statistics
+3. Set label: ai-review:passed | ai-review:needs-attention
+4. Report to user (DO NOT MERGE):
+   "PR Review Complete. Build and tests passing. Ready for human review."
 ```
 
 ---
@@ -183,18 +218,19 @@ NEVER just say "out of scope" without adding tech debt entry.
 
 **EXIT condition (success):**
 ```
-allAgentsReady === true AND unresolved === 0
+allAgentsReady === true AND unresolved === 0 AND build passes AND tests pass
 ```
 
-Both must be true simultaneously. After fixing comments, agents may re-review and add new comments.
+ALL must be true simultaneously.
 
 | Condition | Action |
 |-----------|--------|
-| `allAgentsReady: false` | Wait — agents still reviewing |
+| `allAgentsReady: false` | Wait - agents still reviewing |
 | `allAgentsReady: true, unresolved > 0` | Process comments (Phase 5) |
-| `allAgentsReady: true, unresolved === 0` | **SUCCESS** → Phase 7 |
-| `pause-ai-review` label | **STOP** → User requested |
-| PR closed/merged | **STOP** → External action |
+| `allAgentsReady: true, unresolved === 0` | Build & Test (Phase 6) -> Completion |
+| `pause-ai-review` label | **STOP** - User requested |
+| PR closed/merged | **STOP** - External action |
+| Build fails | Fix errors, do NOT proceed |
 
 ---
 
@@ -203,9 +239,9 @@ Both must be true simultaneously. After fixing comments, agents may re-review an
 | Label | Meaning |
 |-------|---------|
 | `ai-review:active` | Review in progress |
-| `ai-review:passed` | Ready for merge (0 unresolved) |
-| `ai-review:needs-attention` | Has unresolved comments |
-| `pause-ai-review` | **Escape hatch** — stops automation |
+| `ai-review:passed` | Ready for merge (0 unresolved, build passes) |
+| `ai-review:needs-attention` | Has unresolved comments or build issues |
+| `pause-ai-review` | **Escape hatch** - stops automation |
 
 ---
 
@@ -217,6 +253,8 @@ Both must be true simultaneously. After fixing comments, agents may re-review an
 | Agent timeout | Skip agent, continue |
 | PR closed externally | Stop gracefully |
 | Network error | Wait 60s, retry |
+| Build failure | Fix and retry |
+| Test failure | Analyze and fix if caused by changes |
 | Unknown error | Set `ai-review:error` label, stop |
 
 ---
@@ -231,6 +269,7 @@ Both must be true simultaneously. After fixing comments, agents may re-review an
 | Resolved this round | X |
 | Remaining | Y |
 | Current agent | name |
+| Build status | passing/failing |
 
 Status: Processing...
 ```
@@ -240,15 +279,16 @@ Status: Processing...
 ## FORBIDDEN
 
 ```
-❌ pr_merge — merging requires human approval
-❌ Ignoring pause-ai-review label
-❌ Marking ANY comment resolved without fixing
-❌ Skipping comments (regardless of severity)
-❌ "Complex, will defer later"
-❌ "Trivial, can skip"
-❌ "Out of scope" without tech debt entry
-❌ Exiting with unresolved comments
-❌ Force-push or destructive git ops
+X pr_merge - merging requires human approval
+X Ignoring pause-ai-review label
+X Marking ANY comment resolved without fixing
+X Skipping comments (regardless of severity)
+X "Complex, will defer later"
+X "Trivial, can skip"
+X "Out of scope" without tech debt entry
+X Exiting with unresolved comments
+X Exiting with broken build
+X Force-push or destructive git ops
 ```
 
 ---

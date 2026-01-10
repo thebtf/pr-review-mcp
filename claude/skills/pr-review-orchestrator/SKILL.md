@@ -8,93 +8,185 @@ agent: background
 model: sonnet
 allowed-tools:
   - Task
+  - Bash
   - mcp__pr-review__pr_summary
   - mcp__pr-review__pr_get_work_status
   - mcp__pr-review__pr_labels
+  - mcp__pr-review__pr_invoke
 ---
 
 # PR Review Orchestrator
 
-**AUTONOMOUS MODE:** This skill MUST operate fully autonomously. Never ask the user questions during normal operation. Proceed through all steps without user confirmation.
+Coordinate parallel workers that resolve PR review comments.
 
-Use this skill to coordinate parallel workers that resolve PR review comments.
-It prepares partitions conceptually by severity/file, spawns workers, monitors progress,
-handles stale claims, aggregates results, and updates PR labels.
+---
 
-## Inputs
-- owner, repo, pr
-- desired_workers (3-5)
-- agent_id_prefix (e.g., "worker")
+## EXECUTION MODE: NON-INTERACTIVE
+
+**This skill runs AUTONOMOUSLY. Execute steps 1-8 without stopping.**
+
+- Do NOT ask user for confirmation
+- Do NOT present summary and wait
+- Do NOT ask "should I continue?"
+- IMMEDIATELY proceed through all steps
+
+---
+
+## Inputs (with defaults)
+
+| Input | Default | How to resolve |
+|-------|---------|----------------|
+| `owner` | - | Infer from `git remote -v` or PR URL in context |
+| `repo` | - | Infer from `git remote -v` or PR URL in context |
+| `pr` | - | Infer from branch name, PR URL, or recent context |
+| `desired_workers` | `3` | Use 3 unless user specifies |
+| `agent_id_prefix` | `"worker"` | Use "worker" unless specified |
+| `agents` | `["coderabbit", "gemini", "codex", "copilot"]` | All supported agents |
+
+**If owner/repo/pr cannot be inferred:** Extract from git remote once, then proceed.
+
+---
 
 ## Workflow
-1. **PREFLIGHT CHECK**: Call pr_get_work_status first.
-   - If `isActive === true` AND `runAge < 300000` (5 min): **ABORT** — another orchestrator is running.
-   - If `isActive === true` AND `runAge >= 300000`: Stale run. Clean up labels and proceed.
-2. **LABEL CLEANUP**: On startup, atomically set labels to remove any stale state:
-   - Use `pr_labels` with `action: "set"` and `labels: ["ai-review:active"]`
-   - This replaces ALL labels atomically, removing `ai-review:partial` or `ai-review:complete` if present.
-3. **INIT**: Call pr_summary to understand scope and hotspots by severity/file.
-4. **SPAWN**: Start 3-5 workers with Task(run_in_background=true, model="sonnet").
-   - IMPORTANT: Always use model="sonnet" for background workers to avoid wasting opus tokens.
-   - Ensure the first worker call includes pr_info to initialize the run.
-5. **MONITOR LOOP**:
-   - Call pr_get_work_status.
-   - If partitions still processing: **WAIT 30s** and **REPEAT Step 5** immediately.
-   - **DO NOT ASK** the user for permission to continue.
-   - **DO NOT STOP** until `isActive` is false or all partitions are done/failed.
-6. **AGGREGATE**: Compile per-file results from work status and worker reports.
-7. **FINAL LABELS**: Atomically set final state:
-   - If all partitions succeeded: `pr_labels` action="set" labels=["ai-review:complete"]
-   - If some failed: `pr_labels` action="set" labels=["ai-review:partial"]
 
-## Partitioning model
-Actual partitions are created when a worker calls pr_claim_work with pr_info.
-Partitions are grouped by file and severity based on unresolved threads.
-See D:/Dev/pr-review-mcp/src/tools/coordination.ts for grouping logic.
+Execute ALL steps automatically. Do NOT stop between steps.
 
-## Stale claims handling
-Workers are considered stale after 5 minutes without activity.
-On the next pr_claim_work call, stale claimed files are re-queued.
-See D:/Dev/pr-review-mcp/src/coordination/state.ts (cleanupStaleAgents).
-If pr_get_work_status shows old lastSeen values, spawn a replacement worker.
-
-## Example tool calls
-
-### Step 1: Preflight check
-```json
-{"tool":"pr_get_work_status","input":{}}
+### Step 0: RESOLVE PARAMETERS
+```bash
+# Get owner/repo from git remote
+git remote get-url origin
+# Extract: github.com/OWNER/REPO.git -> owner=OWNER, repo=REPO
 ```
-Response fields: `isActive`, `runAge` — if isActive && runAge < 300000, abort.
+If PR number unknown, check recent PRs or ask ONCE at start.
 
-### Step 2: Atomic label cleanup
-```json
-{"tool":"pr_labels","input":{"owner":"ORG","repo":"REPO","pr":123,"action":"set","labels":["ai-review:active"]}}
+### Step 1: PREFLIGHT CHECK
 ```
-
-### Step 3: Get summary
-```json
-{"tool":"pr_summary","input":{"owner":"ORG","repo":"REPO","pr":123}}
+pr_get_work_status {}
 ```
+- `isActive === true` AND `runAge < 300000` -> **ABORT** (another orchestrator running)
+- `isActive === true` AND `runAge >= 300000` -> Stale run, proceed
 
-### Step 4: Spawn workers (3-5 in parallel)
-Spawn multiple workers in a single message with multiple Task tool calls:
-```json
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-1 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-2 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Use skill pr-review-worker. agent_id=worker-3 owner=ORG repo=REPO pr=123. Start IMMEDIATELY by calling pr_claim_work."}}
+**-> IMMEDIATELY proceed to Step 2**
+
+### Step 2: LABEL CLEANUP
 ```
-Repeat for desired_workers count (typically 3-5). Each worker MUST have unique agent_id.
+pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:active"] }
+```
+Atomic set removes stale labels.
 
-### Step 5: Monitor progress
+**-> IMMEDIATELY proceed to Step 3**
+
+### Step 3: INVOKE REVIEW AGENTS
+```
+pr_invoke { owner, repo, pr, agent: "all" }
+```
+Triggers configured agents (coderabbit, gemini, codex, copilot).
+
+**-> IMMEDIATELY proceed to Step 4**
+
+### Step 4: GET SUMMARY
+```
+pr_summary { owner, repo, pr }
+```
+Understand scope. Do NOT display to user. Do NOT ask confirmation.
+
+**-> IMMEDIATELY proceed to Step 5**
+
+### Step 5: SPAWN WORKERS
+Spawn 3 workers in parallel (single message with multiple Task calls):
+
 ```json
-{"tool":"pr_get_work_status","input":{}}
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-1, owner=OWNER, repo=REPO, pr=PR_NUMBER. Start immediately."}}
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-2, owner=OWNER, repo=REPO, pr=PR_NUMBER. Start immediately."}}
+{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-3, owner=OWNER, repo=REPO, pr=PR_NUMBER. Start immediately."}}
 ```
 
-### Step 7: Final labels (atomic set)
-```json
-{"tool":"pr_labels","input":{"owner":"ORG","repo":"REPO","pr":123,"action":"set","labels":["ai-review:complete"]}}
+**-> IMMEDIATELY proceed to Step 6**
+
+### Step 6: MONITOR
+Poll every 30s until all partitions complete:
+```
+pr_get_work_status {}
+```
+- Check `pendingFiles`, `completedFiles`, `failedFiles`
+- If worker stale (>5min), spawn replacement
+- Continue until all files processed
+
+**-> IMMEDIATELY proceed to Step 7 when done**
+
+### Step 7: FINAL BUILD & TEST
+
+**MANDATORY: After all workers complete, verify the codebase builds and tests pass.**
+
+```bash
+# Detect project type and run build
+npm run build   # Node.js/TypeScript
+dotnet build    # .NET
+cargo build     # Rust
+go build ./...  # Go
 ```
 
-## Output
-- Return a concise summary of resolved/failed counts by file and severity.
-- If no MCP comment tool is available, return the summary to the caller for posting.
+**If build fails:**
+1. Analyze error output to identify which file(s) broke
+2. Spawn a repair worker to fix compilation errors:
+   ```json
+   {"tool": "Task", "input": {"subagent_type": "general-purpose", "model": "sonnet", "prompt": "Fix build errors in [FILE]. Error: [ERROR_MESSAGE]. Do not introduce new issues."}}
+   ```
+3. Re-run build until success
+
+**Run tests:**
+```bash
+npm test        # or: dotnet test, cargo test, go test ./...
+```
+
+**If tests fail:**
+1. Identify failing tests
+2. If failure is caused by changes made during review -> fix it
+3. If failure is pre-existing -> note in report, don't block
+
+**-> IMMEDIATELY proceed to Step 8**
+
+### Step 8: FINAL LABELS
+```
+pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:complete"] }
+# OR if failures:
+pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:partial"] }
+```
+
+Report summary to user ONLY at the end.
+
+---
+
+## Supported Review Agents
+
+| Agent | Status | Method |
+|-------|--------|--------|
+| CodeRabbit | Supported | GitHub Checks API |
+| Gemini | Supported | PR Reviews |
+| Codex | Supported | PR Reviews |
+| Copilot | Supported | requested_reviewers + reviews |
+| Sourcery | Supported | PR Reviews |
+| Qodo | Supported | Issue comments |
+
+---
+
+## FORBIDDEN
+
+```
+X Asking user "should I start?"
+X Presenting summary and waiting for confirmation
+X Asking for missing parameters after Step 0
+X Stopping between steps
+X Running single-threaded (must spawn parallel workers)
+X pr_merge (merging requires human approval)
+X Exiting with broken build
+```
+
+---
+
+## Quick Start
+
+```
+Run pr-review-orchestrator for PR #100
+Orchestrate review for thebtf/novascript#42 with 5 workers
+```
