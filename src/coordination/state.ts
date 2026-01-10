@@ -365,6 +365,43 @@ class CoordinationStateManager {
   resetRun(): void {
     this.currentRun = null;
   }
+
+  /**
+   * Add new partitions to an existing run (for dynamic partition refresh)
+   * Only adds partitions for files that don't already exist in the run
+   * Reopens the run if it was completed
+   * @returns Number of new partitions added
+   */
+  addPartitions(partitions: FilePartition[]): number {
+    if (!this.currentRun) return 0;
+
+    let added = 0;
+    for (const p of partitions) {
+      // Only add if file doesn't already have a partition
+      if (!this.currentRun.partitions.has(p.file)) {
+        this.currentRun.partitions.set(p.file, { ...p, status: 'pending' });
+        added++;
+      }
+    }
+
+    // Reopen run if it was completed and we added new work
+    if (added > 0 && this.currentRun.completedAt) {
+      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added ${added} new partitions`);
+      this.currentRun.completedAt = undefined;
+    }
+
+    return added;
+  }
+
+  /**
+   * Check if all current partitions are done/failed (for refresh check)
+   */
+  allPartitionsDone(): boolean {
+    if (!this.currentRun) return true;
+    return Array.from(this.currentRun.partitions.values()).every(
+      p => p.status === 'done' || p.status === 'failed'
+    );
+  }
 }
 
 export const stateManager = new CoordinationStateManager();

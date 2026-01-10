@@ -99,6 +99,56 @@ async function initializeRun(
   return stateManager.initRun({ owner, repo, pr }, headSha, partitions);
 }
 
+/**
+ * Refresh partitions by fetching current unresolved comments
+ * and adding new files that aren't already in the run.
+ * This handles comments added by review agents AFTER the initial run started.
+ */
+async function refreshPartitions(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<number> {
+  // Fetch current unresolved comments
+  const { comments } = await fetchAllThreads(client, owner, repo, pr, {
+    filter: { resolved: false },
+    maxItems: 500
+  });
+
+  // Group by file
+  const fileGroups = new Map<string, { threadIds: Set<string>, severity: Severity }>();
+
+  for (const comment of comments) {
+    if (!comment.file) continue;
+
+    const existingGroup = fileGroups.get(comment.file);
+    const group = existingGroup ?? {
+      threadIds: new Set<string>(),
+      severity: comment.severity as Severity
+    };
+
+    group.threadIds.add(comment.threadId);
+
+    if (existingGroup) {
+      group.severity = maxSeverity(group.severity, comment.severity as Severity);
+    }
+
+    fileGroups.set(comment.file, group);
+  }
+
+  // Create partitions for new files
+  const newPartitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
+    file,
+    comments: Array.from(data.threadIds),
+    severity: data.severity,
+    status: 'pending' as const
+  }));
+
+  // Add to existing run (only adds files not already present)
+  return stateManager.addPartitions(newPartitions);
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -159,7 +209,23 @@ export async function prClaimWork(
     await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr);
   }
 
-  const partition = stateManager.claimPartition(agent_id);
+  let partition = stateManager.claimPartition(agent_id);
+
+  // If no partition available, check if we should refresh with new unresolved comments
+  // This handles comments added by review agents AFTER the initial run started
+  if (!partition && stateManager.allPartitionsDone()) {
+    const run = stateManager.getCurrentRun();
+    if (run) {
+      const { owner, repo, pr } = run.prInfo;
+      const newPartitions = await refreshPartitions(client, owner, repo, pr);
+
+      if (newPartitions > 0) {
+        console.warn(`[coordination] Refreshed partitions - added ${newPartitions} new files`);
+        // Try to claim again after refresh
+        partition = stateManager.claimPartition(agent_id);
+      }
+    }
+  }
 
   if (!partition) {
     return {
@@ -176,7 +242,10 @@ export async function prClaimWork(
 
 export async function prReportProgress(
   input: ReportProgressInput
-) {
+): Promise<
+  | { status: 'error'; message: string }
+  | { status: 'success'; file: string; new_status: 'done' | 'failed' | 'skipped' }
+> {
   const { agent_id, file, status, result } = input;
 
   const success = stateManager.reportProgress(agent_id, file, status, result);
@@ -199,7 +268,7 @@ export async function prGetWorkStatus(
   input: GetWorkStatusInput
 ) {
   // We currently ignore run_id in input as we only support singleton active run
-  const status = stateManager.getStatus();
+  const { active, ...status } = stateManager.getStatus();
 
   return {
     ...status,
