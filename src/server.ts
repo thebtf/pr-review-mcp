@@ -32,6 +32,7 @@ import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
+import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
 import {
   prClaimWork,
   prReportProgress,
@@ -220,6 +221,20 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' }
               },
               required: ['owner', 'repo', 'pr']
+            }
+          },
+          {
+            name: 'pr_list_prs',
+            description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                state: { type: 'string', enum: ['OPEN', 'CLOSED', 'MERGED', 'all'], description: 'PR state filter (default: OPEN)' },
+                limit: { type: 'number', description: 'Max PRs to return (default: 20, max: 100)' }
+              },
+              required: ['owner', 'repo']
             }
           },
           {
@@ -430,7 +445,8 @@ export class PRReviewMCPServer {
                   },
                   required: ['owner', 'repo', 'pr'],
                   description: 'PR info (required if no active run)'
-                }
+                },
+                force: { type: 'boolean', description: 'Force replace active run (use with caution)' }
               },
               required: ['agent_id']
             }
@@ -472,7 +488,7 @@ export class PRReviewMCPServer {
             inputSchema: {
               type: 'object',
               properties: {
-                confirm: { type: 'boolean', description: 'Must be true to confirm reset', enum: [true] }
+                confirm: { type: 'boolean', const: true, description: 'Must be true to confirm reset (safety guard)' }
               },
               required: ['confirm']
             }
@@ -513,6 +529,7 @@ export class PRReviewMCPServer {
 
     const toolHandlers: Record<string, ToolHandler> = {
       'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
+      'pr_list_prs': createToolHandler(ListPRsInputSchema, prListPRs),
       'pr_list': createToolHandler(ListInputSchema, prList),
       'pr_get': createToolHandler(GetInputSchema, prGet),
       'pr_resolve': createToolHandler(ResolveInputSchema, prResolveWithContext),
