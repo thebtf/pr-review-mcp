@@ -439,40 +439,25 @@ function generateInferRepoPrompt(context: PromptContext): string {
   const { desiredWorkers, envConfig, requestedPR } = context;
 
   const prInstruction = requestedPR
-    ? `Process PR **#${requestedPR}** in the current repository.`
-    : `Process **all open PRs** with unresolved comments in the current repository.`;
+    ? `Then process PR **#${requestedPR}**.`
+    : `Then process **all open PRs** with unresolved comments.`;
 
-  return `# PR Review
+  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
-## Step 0: RESOLVE REPOSITORY
-
-**First, determine the repository from git remote:**
-
+**STEP 1: Run this command NOW:**
 \`\`\`bash
 git remote get-url origin
 \`\`\`
 
-Parse the output to extract \`owner\` and \`repo\`:
-- \`https://github.com/OWNER/REPO.git\` → owner=OWNER, repo=REPO
-- \`git@github.com:OWNER/REPO.git\` → owner=OWNER, repo=REPO
-
-${prInstruction}
-
-## Configuration
-- **Agents to invoke**: ${envConfig.agents.join(', ')}
-- **Review mode**: ${envConfig.mode}
-- **Workers**: ${desiredWorkers}
-${requestedPR ? `- **Target PR**: #${requestedPR}` : '- **Target**: All open PRs with comments'}
+Parse result → extract owner/repo → ${prInstruction}
 
 ---
 
-**After resolving owner/repo, proceed with the workflow:**
-
-${ORCHESTRATOR_WORKFLOW}
+Config: agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
 
 ---
 
-**START NOW. Execute Step 0 to get repository info.**`;
+${ORCHESTRATOR_WORKFLOW}`;
 }
 
 /**
@@ -507,53 +492,24 @@ function generateSinglePRPrompt(context: PromptContext): string {
   const target = context.targets[0];
   const { currentSummary, workStatus, desiredWorkers, envConfig } = context;
 
-  let header = `# PR Review: ${target.owner}/${target.repo}#${target.pr}
-
-## Pre-fetched Context
-`;
-
+  let statusLine = '';
   if (currentSummary) {
-    header += `
-### Review Status
-| Metric | Count |
-|--------|-------|
-| Total comments | ${currentSummary.total} |
-| Resolved | ${currentSummary.resolved} |
-| **Unresolved** | **${currentSummary.unresolved}** |
-
-### By Severity
-${Object.entries(currentSummary.bySeverity)
-  .map(([sev, count]) => `- ${sev}: ${count}`)
-  .join('\n')}
-`;
+    statusLine = `Status: ${currentSummary.unresolved} unresolved / ${currentSummary.total} total`;
   }
 
-  if (workStatus) {
-    header += `
-### Coordination Status
-- Active run: ${workStatus.isActive ? 'Yes' : 'No'}
-${workStatus.isActive ? `- Run age: ${Math.round((workStatus.runAge || 0) / 1000)}s` : ''}
-`;
-  }
+  const activeWarning = workStatus?.isActive
+    ? `\n⚠️ Active run detected (age: ${Math.round((workStatus.runAge || 0) / 1000)}s) — check preflight!`
+    : '';
 
-  header += `
-### Configuration
-- **Agents to invoke**: ${envConfig.agents.join(', ')}
-- **Review mode**: ${envConfig.mode}
-- Desired workers: ${desiredWorkers}
-- Target: ${target.owner}/${target.repo}#${target.pr}
+  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+
+**Target:** ${target.owner}/${target.repo}#${target.pr}
+**${statusLine}**${activeWarning}
+**Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
 
 ---
 
-## Workflow
-
-${ORCHESTRATOR_WORKFLOW}
-
----
-
-**START NOW. Execute Step 1 immediately.**`;
-
-  return header;
+${ORCHESTRATOR_WORKFLOW}`;
 }
 
 /**
@@ -562,40 +518,18 @@ ${ORCHESTRATOR_WORKFLOW}
 function generateBatchPrompt(context: PromptContext): string {
   const { targets, desiredWorkers, envConfig } = context;
 
-  const prList = targets
-    .map(t => `| #${t.pr} | ${t.title || '-'} | ${t.unresolved ?? '?'} |`)
-    .join('\n');
+  const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
-  return `# PR Review: Batch Processing
+  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
-## PRs to Process
+**Batch:** ${prList}
+**Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
 
-| PR | Title | Unresolved |
-|----|-------|------------|
-${prList}
-
-## Configuration
-- **Agents to invoke**: ${envConfig.agents.join(', ')}
-- **Review mode**: ${envConfig.mode}
-- Total PRs: ${targets.length}
-- Workers per PR: ${desiredWorkers}
-
-## Execution Plan
-
-Process PRs **${envConfig.mode === 'parallel' ? 'in parallel' : 'sequentially'}**:
-
-\`\`\`
-for each PR in [${targets.map(t => `#${t.pr}`).join(', ')}]:
-  1. Run full orchestrator workflow
-  2. Wait for completion
-  3. Move to next PR
-\`\`\`
-
-${ORCHESTRATOR_WORKFLOW}
+Process ${envConfig.mode === 'parallel' ? 'in parallel' : 'sequentially'}, starting with #${targets[0].pr}.
 
 ---
 
-**START NOW with PR #${targets[0].pr}.**`;
+${ORCHESTRATOR_WORKFLOW}`;
 }
 
 // ============================================================================
