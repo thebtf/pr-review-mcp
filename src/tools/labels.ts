@@ -1,7 +1,7 @@
 /**
  * pr_labels tool - Manage PR labels
  *
- * Add, remove, or set labels on a pull request.
+ * Get, add, remove, or set labels on a pull request.
  */
 
 import { z } from 'zod';
@@ -16,9 +16,12 @@ export const LabelsInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive'),
-  action: z.enum(['add', 'remove', 'set']),
-  labels: z.array(z.string().min(1)).min(1, 'At least one label is required')
-});
+  action: z.enum(['get', 'add', 'remove', 'set']),
+  labels: z.array(z.string().min(1)).optional()
+}).refine(
+  (data) => data.action === 'get' || (data.labels && data.labels.length > 0),
+  { message: 'At least one label is required for add/remove/set actions', path: ['labels'] }
+);
 
 export type LabelsInput = z.infer<typeof LabelsInputSchema>;
 
@@ -28,7 +31,7 @@ export type LabelsInput = z.infer<typeof LabelsInputSchema>;
 
 export interface LabelsOutput {
   success: boolean;
-  action: 'add' | 'remove' | 'set';
+  action: 'get' | 'add' | 'remove' | 'set';
   labels: string[]; // Current labels after operation
   added?: string[];
   removed?: string[];
@@ -48,12 +51,28 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
     let currentLabels: string[] = [];
 
     switch (action) {
+      case 'get': {
+        const { data: issue } = await octokit.issues.get({
+          owner,
+          repo,
+          issue_number: pr
+        });
+        currentLabels = issue.labels.map(l =>
+          typeof l === 'string' ? l : l.name || ''
+        ).filter(Boolean);
+        return {
+          success: true,
+          action: 'get',
+          labels: currentLabels
+        };
+      }
+
       case 'add': {
         const { data } = await octokit.issues.addLabels({
           owner,
           repo,
           issue_number: pr,
-          labels
+          labels: labels!
         });
         currentLabels = data.map(l => l.name);
         return {
@@ -66,7 +85,7 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
 
       case 'remove': {
         const removed: string[] = [];
-        for (const label of labels) {
+        for (const label of labels!) {
           try {
             await octokit.issues.removeLabel({
               owner,
@@ -107,7 +126,7 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
           owner,
           repo,
           issue_number: pr,
-          labels
+          labels: labels!
         });
         currentLabels = data.map(l => l.name);
         return {

@@ -281,21 +281,21 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_labels',
-            description: 'Add, remove, or set labels on a PR',
+            description: 'Get, add, remove, or set labels on a PR',
             inputSchema: {
               type: 'object',
               properties: {
                 owner: { type: 'string', description: 'Repository owner' },
                 repo: { type: 'string', description: 'Repository name' },
                 pr: { type: 'number', description: 'Pull request number' },
-                action: { type: 'string', enum: ['add', 'remove', 'set'], description: 'Label action' },
+                action: { type: 'string', enum: ['get', 'add', 'remove', 'set'], description: 'Label action (get returns current labels)' },
                 labels: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: 'Label names'
+                  description: 'Label names (required for add/remove/set, ignored for get)'
                 }
               },
-              required: ['owner', 'repo', 'pr', 'action', 'labels']
+              required: ['owner', 'repo', 'pr', 'action']
             }
           },
           {
