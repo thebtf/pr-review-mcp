@@ -115,7 +115,7 @@ export const QUERIES = {
             additions
             deletions
             changedFiles
-            reviewThreads {
+            reviewThreads(first: 50) {
               totalCount
               nodes {
                 isResolved
