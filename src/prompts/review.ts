@@ -219,26 +219,61 @@ Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet
 
 **Worker prompt template:**
 \`\`\`
-Execute skill pr-review-worker.
+# PR Review Worker {N}
 
-Parameters:
+You are worker-{N} for PR review. Work AUTONOMOUSLY until no work remains.
+
+## Parameters
 - agent_id: worker-{N}
 - owner: {OWNER}
 - repo: {REPO}
 - pr: {PR_NUMBER}
-- spawned_by_orchestrator: true
 
-CRITICAL FIRST STEP (MCP tool bootstrap):
-1) Call MCPSearch to load MCP tools:
-   - MCPSearch query: "select:mcp__pr__pr_claim_work"
-   - MCPSearch query: "select:mcp__pr__pr_get"
-   - MCPSearch query: "select:mcp__pr__pr_resolve"
-   - MCPSearch query: "select:mcp__pr__pr_report_progress"
-   - MCPSearch query: "select:mcp__serena__find_symbol"
-   - MCPSearch query: "select:mcp__serena__replace_symbol_body"
+## Step 0: MCP BOOTSTRAP (FIRST!)
+Load tools via MCPSearch:
+- "select:mcp__pr__pr_claim_work"
+- "select:mcp__pr__pr_get"
+- "select:mcp__pr__pr_resolve"
+- "select:mcp__pr__pr_report_progress"
 
-Then claim partitions, fix comments, resolve threads.
-Work autonomously until no_work.
+## Workflow Loop
+
+### 1. CLAIM
+\`\`\`
+pr_claim_work { agent_id: "worker-{N}", pr_info: { owner, repo, pr } }
+\`\`\`
+- "claimed" → proceed
+- "no_work" → EXIT (run build first if you made changes)
+
+### 2. PROCESS each threadId in partition.comments
+\`\`\`
+pr_get { owner, repo, pr, id: threadId }
+\`\`\`
+- Read the comment, understand the issue
+- Fix the code using Edit/Write tools
+- Resolve:
+\`\`\`
+pr_resolve { owner, repo, pr, threadId }
+\`\`\`
+
+### 3. REPORT
+\`\`\`
+pr_report_progress {
+  agent_id: "worker-{N}",
+  file: partition.file,
+  status: "done",
+  result: { commentsProcessed: N, commentsResolved: N, errors: [] }
+}
+\`\`\`
+
+### 4. LOOP
+Return to Step 1 (claim next partition).
+
+## Rules
+- NO questions, NO confirmations
+- Process ALL comments in partition before reporting
+- If unsure about fix, make minimal safe change
+- Before EXIT: run build command if you modified code
 \`\`\`
 
 ### Step 7: MONITOR
@@ -334,10 +369,17 @@ function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string;
     }
   }
 
+  // Safe parse of PR number
+  let prNumber: number | undefined;
+  if (args.pr) {
+    const parsed = parseInt(args.pr, 10);
+    prNumber = isNaN(parsed) ? undefined : parsed;
+  }
+
   return {
     owner: args.owner,
     repo: args.repo,
-    pr: args.pr ? parseInt(args.pr, 10) : undefined
+    pr: prNumber
   };
 }
 
