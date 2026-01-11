@@ -11,12 +11,17 @@ model: sonnet
 allowed-tools:
   - Task
   - Bash
-  - Read
   - mcp__pr-review__pr_summary
   - mcp__pr-review__pr_get_work_status
   - mcp__pr-review__pr_labels
   - mcp__pr-review__pr_invoke
   - mcp__pr-review__pr_poll_updates
+# FORBIDDEN for orchestrator (workers only):
+# - Read, Edit, Write, Grep, Glob
+# - mcp__pr-review__pr_list
+# - mcp__pr-review__pr_get
+# - mcp__pr-review__pr_resolve
+# - mcp__pr-review__pr_claim_work
 ---
 
 # PR Review Orchestrator
@@ -33,6 +38,20 @@ Autonomous multi-agent PR review. Spawns parallel workers, monitors progress, en
 - Do NOT present summary and wait
 - Do NOT ask "should I continue?"
 - IMMEDIATELY proceed through all steps
+
+### ORCHESTRATOR ROLE (CRITICAL)
+
+**You are the ORCHESTRATOR, not a worker.**
+
+| Orchestrator DOES | Orchestrator DOES NOT |
+|-------------------|----------------------|
+| Spawn workers via Task tool | Read/Edit code files |
+| Monitor via pr_poll_updates | Call pr_list, pr_get |
+| Set labels via pr_labels | Call pr_resolve |
+| Invoke agents via pr_invoke | Process comments directly |
+| Track progress via pr_get_work_status | Fix code issues |
+
+**If you find yourself using pr_list, pr_get, pr_resolve, Read, or Edit — STOP. You are breaking the orchestrator pattern. Spawn workers instead.**
 
 ---
 
@@ -97,6 +116,10 @@ INIT -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 
 Execute ALL steps automatically. Do NOT stop between steps.
 
+**PARALLEL EXECUTION REMINDER:**
+When spawning workers (Step 6), you MUST send multiple Task tool calls in a SINGLE message.
+This is how Claude Code achieves parallelism. Sequential calls = no parallelism.
+
 ### Step 0: RESOLVE PARAMETERS
 ```bash
 git remote get-url origin
@@ -154,15 +177,56 @@ Check convergence:
 
 **-> IMMEDIATELY proceed based on condition**
 
-### Step 6: SPAWN WORKERS
+### Step 6: SPAWN WORKERS (PARALLEL)
 
-Spawn 3 workers in parallel (single message with multiple Task calls):
+**ACTION REQUIRED: Call Task tool 3 times IN PARALLEL (single response, multiple tool calls).**
 
-```json
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-1, owner=OWNER, repo=REPO, pr=PR_NUMBER, spawned_by_orchestrator=true. Start immediately."}}
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-2, owner=OWNER, repo=REPO, pr=PR_NUMBER, spawned_by_orchestrator=true. Start immediately."}}
-{"tool": "Task", "input": {"subagent_type": "general-purpose", "run_in_background": true, "model": "sonnet", "prompt": "Execute skill pr-review-worker. Parameters: agent_id=worker-3, owner=OWNER, repo=REPO, pr=PR_NUMBER, spawned_by_orchestrator=true. Start immediately."}}
+You MUST spawn workers using the Task tool with these EXACT parameters:
+
+| Parameter | Value |
+|-----------|-------|
+| `subagent_type` | `"general-purpose"` |
+| `run_in_background` | `true` |
+| `model` | `"sonnet"` |
+| `description` | `"PR worker N"` |
+
+**Prompt template for each worker:**
 ```
+Execute skill pr-review-worker.
+
+Parameters:
+- agent_id: worker-{N}
+- owner: {OWNER}
+- repo: {REPO}
+- pr: {PR_NUMBER}
+- spawned_by_orchestrator: true
+
+CRITICAL FIRST STEP (MCP tool bootstrap):
+1) Call MCPSearch to load MCP tools for "pr-review" and "serena" servers:
+   - MCPSearch query: "select:mcp__pr-review__pr_claim_work"
+   - MCPSearch query: "select:mcp__pr-review__pr_get"
+   - MCPSearch query: "select:mcp__pr-review__pr_resolve"
+   - MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+   - MCPSearch query: "select:mcp__serena__get_symbols_overview"
+   - MCPSearch query: "select:mcp__serena__find_symbol"
+   - MCPSearch query: "select:mcp__serena__replace_symbol_body"
+2) If any tool missing, report error via pr_report_progress and exit.
+
+Then start processing. Claim partitions, fix comments, resolve threads.
+Do NOT ask questions. Work autonomously until no_work.
+If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.
+```
+
+**CRITICAL: Send ALL 3 Task calls in ONE message to run in parallel.**
+
+Example (conceptual):
+```
+[Call 1] Task(subagent_type="general-purpose", run_in_background=true, model="sonnet", prompt="...worker-1...")
+[Call 2] Task(subagent_type="general-purpose", run_in_background=true, model="sonnet", prompt="...worker-2...")
+[Call 3] Task(subagent_type="general-purpose", run_in_background=true, model="sonnet", prompt="...worker-3...")
+```
+
+If you send them sequentially (one at a time), parallelism is BROKEN.
 
 **-> IMMEDIATELY proceed to Step 7**
 
@@ -181,23 +245,22 @@ Poll every 30s until all partitions complete:
 
 **MANDATORY: Verify codebase builds and tests pass.**
 
-```bash
-npm run build   # Node.js/TypeScript
-dotnet build    # .NET
-cargo build     # Rust
-go build ./...  # Go
-```
+**Detect project type by marker files:**
+
+| Marker File | Project Type | Build Command | Test Command |
+|-------------|--------------|---------------|--------------|
+| `package.json` | Node.js/TS | `npm run build` | `npm test` |
+| `*.csproj` / `*.sln` | .NET | `dotnet build` | `dotnet test` |
+| `Cargo.toml` | Rust | `cargo build` | `cargo test` |
+| `go.mod` | Go | `go build ./...` | `go test ./...` |
+| `pyproject.toml` / `setup.py` | Python | `pip install -e .` | `pytest` |
+| `Makefile` | Generic | `make` | `make test` |
 
 **If build fails:**
 1. Analyze error output
 2. Spawn repair worker to fix
 3. Re-run build until success
 4. **DO NOT proceed with broken build**
-
-**Run tests:**
-```bash
-npm test        # or: dotnet test, cargo test, go test ./...
-```
 
 **If tests fail:**
 - Caused by review changes -> fix it
@@ -301,20 +364,36 @@ NEVER just say "out of scope" without adding tech debt entry.
 
 ---
 
-## FORBIDDEN
+## FORBIDDEN (Orchestrator)
 
 ```
+MERGE/SAFETY:
 X pr_merge - merging requires human approval
 X Ignoring pause-ai-review label
-X Marking ANY comment resolved without fixing
-X Skipping comments (regardless of severity)
-X "Out of scope" without tech debt entry
 X Exiting with unresolved comments
 X Exiting with broken build
+
+WORKER TOOLS (orchestrator must NOT use these):
+X pr_list - workers only
+X pr_get - workers only
+X pr_resolve - workers only
+X pr_claim_work - workers only
+X Read - workers only
+X Edit - workers only
+X Write - workers only
+X Grep - workers only
+
+WORKFLOW VIOLATIONS:
+X Processing comments yourself (spawn workers!)
+X Running single-threaded (must spawn parallel workers)
+X Spawning workers ONE BY ONE (must be parallel in single message)
+X Skipping Step 6 when unresolved > 0
+X Not using model="sonnet" for workers
 X Asking user "should I start?"
 X Presenting summary and waiting for confirmation
-X Running single-threaded (must spawn parallel workers)
 ```
+
+**If you catch yourself using pr_list/pr_get/pr_resolve/Read/Edit — you are doing the WORKER's job. STOP and spawn workers instead.**
 
 ---
 

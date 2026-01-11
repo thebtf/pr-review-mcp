@@ -44,66 +44,11 @@ import {
   ResetCoordinationSchema
 } from './tools/coordination.js';
 import { getInvokableAgentIds } from './agents/registry.js';
-
-// ============================================================================
-// Workflow Prompt
-// ============================================================================
-
-const PR_REVIEW_PROMPT = `I'll process PR review comments systematically until all are resolved.
-
-## Phase 1: Discovery
-
-1. Call \`pr_summary\` to get statistics
-2. Note total, resolved, unresolved counts
-3. Create todo list if unresolved > 0
-
-## Phase 2: Classification
-
-1. Call \`pr_list\` with \`filter: { resolved: false }\`
-2. Classify by priority:
-   - **HIGH** (must fix): CRIT, MAJOR, security issues
-   - **MEDIUM** (should fix): MINOR, type safety, error handling
-   - **LOW** (nice to have): NITPICK, style, docs
-
-## Phase 3: User Approval
-
-Present categorized list to user:
-- Show priorities with brief descriptions
-- Ask user to confirm which issues to address
-- Allow user to skip or reprioritize items
-
-## Phase 4: Implementation
-
-For each approved item (HIGH → MEDIUM → LOW):
-1. Call \`pr_get\` to fetch full details + AI prompt
-2. **Execute AI prompt literally** if available
-3. Read target file and apply fix
-4. Verify fix compiles/passes lint
-5. Call \`pr_resolve\` to mark thread resolved
-6. Update todo list (mark completed)
-
-## Phase 5: Completion
-
-1. Re-check \`pr_summary\` - verify 0 unresolved
-2. If new comments appeared, return to Phase 2
-3. Report final status: "Ready for merge approval"
-4. Summarize all fixes applied
-
-## Rules
-
-| Rule | Description |
-|------|-------------|
-| **NO DEFERRING** | Every comment gets fixed. No "complex = later" |
-| **USE AI PROMPT** | Execute AI prompts from comments literally |
-| **VERIFY FIXES** | Ensure each fix compiles before resolving |
-| **ITERATE** | New review rounds may add more comments |
-
-## Error Handling
-
-If a tool fails:
-- Retry with backoff for network errors
-- Skip and note for permission errors
-- Report blockers requiring manual intervention`;
+import {
+  generateReviewPrompt,
+  REVIEW_PROMPT_DEFINITION,
+  type ReviewPromptArgs
+} from './prompts/review.js';
 
 // ============================================================================
 // MCP Server
@@ -116,7 +61,7 @@ export class PRReviewMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'pr-review-mcp',
+        name: 'pr',
         version: '1.0.0',
       },
       {
@@ -150,25 +95,9 @@ export class PRReviewMCPServer {
       return {
         prompts: [
           {
-            name: 'pr-review',
-            description: 'Automated PR review processing - systematically address all review comments',
-            arguments: [
-              {
-                name: 'owner',
-                description: 'Repository owner (username or organization)',
-                required: true
-              },
-              {
-                name: 'repo',
-                description: 'Repository name',
-                required: true
-              },
-              {
-                name: 'pr',
-                description: 'Pull request number (as string)',
-                required: true
-              }
-            ]
+            name: REVIEW_PROMPT_DEFINITION.name,
+            description: REVIEW_PROMPT_DEFINITION.description,
+            arguments: REVIEW_PROMPT_DEFINITION.arguments
           }
         ] as Prompt[]
       };
@@ -178,15 +107,15 @@ export class PRReviewMCPServer {
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      if (name === 'pr-review') {
-        const owner = args?.owner || '';
-        const repo = args?.repo || '';
-        const pr = args?.pr || '';
+      if (name === 'review') {
+        const promptArgs: ReviewPromptArgs = {
+          owner: args?.owner as string | undefined,
+          repo: args?.repo as string | undefined,
+          pr: args?.pr as string | undefined,
+          workers: args?.workers as string | undefined
+        };
 
-        const promptText = PR_REVIEW_PROMPT +
-          (owner && repo && pr
-            ? `\n\n---\n\nStarting review for **${owner}/${repo}#${pr}**. Let me get the summary first.`
-            : '\n\n---\n\nPlease provide owner, repo, and pr number to begin.');
+        const promptText = await generateReviewPrompt(promptArgs, this.githubClient);
 
         return {
           messages: [
@@ -526,7 +455,6 @@ export class PRReviewMCPServer {
     };
 
     // Tool handler map for better maintainability and scalability
-
     const toolHandlers: Record<string, ToolHandler> = {
       'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
       'pr_list_prs': createToolHandler(ListPRsInputSchema, prListPRs),
@@ -570,7 +498,6 @@ export class PRReviewMCPServer {
         }
 
         if (error instanceof StructuredError) {
-          // Map StructuredError kinds to appropriate MCP error codes
           const errorCodeMap: Record<string, ErrorCode> = {
             'auth': ErrorCode.InvalidRequest,
             'permission': ErrorCode.InvalidRequest,

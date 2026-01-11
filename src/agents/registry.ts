@@ -1,6 +1,14 @@
 /**
  * Agent Registry - Defines invokable AI code review agents
+ *
+ * Configuration via environment variables:
+ * - PR_REVIEW_AGENTS: Comma-separated list of agents to invoke (default: 'coderabbit')
+ * - PR_REVIEW_MODE: 'sequential' | 'parallel' (default: 'sequential')
  */
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface AgentConfig {
   /** Human-readable agent name */
@@ -18,6 +26,11 @@ export interface AgentConfig {
 }
 
 export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex' | 'copilot';
+export type ReviewMode = 'sequential' | 'parallel';
+
+// ============================================================================
+// Agent Definitions
+// ============================================================================
 
 /**
  * Agents that can be manually invoked via pr_invoke
@@ -81,6 +94,62 @@ export const PARSABLE_SOURCES = [
 ] as const;
 
 export type ParsableSource = typeof PARSABLE_SOURCES[number];
+
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+
+const DEFAULT_AGENTS: InvokableAgentId[] = ['coderabbit'];
+const DEFAULT_MODE: ReviewMode = 'sequential';
+
+/**
+ * Get default agents from PR_REVIEW_AGENTS environment variable
+ * Format: comma-separated list of agent IDs (e.g., "coderabbit,gemini,codex")
+ * Default: ['coderabbit']
+ */
+export function getDefaultAgents(): InvokableAgentId[] {
+  const envValue = process.env.PR_REVIEW_AGENTS;
+
+  if (!envValue || envValue.trim() === '') {
+    return DEFAULT_AGENTS;
+  }
+
+  const agents = envValue
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter((id): id is InvokableAgentId => isInvokableAgent(id));
+
+  return agents.length > 0 ? agents : DEFAULT_AGENTS;
+}
+
+/**
+ * Get review mode from PR_REVIEW_MODE environment variable
+ * Values: 'sequential' | 'parallel'
+ * Default: 'sequential'
+ */
+export function getReviewMode(): ReviewMode {
+  const envValue = process.env.PR_REVIEW_MODE?.toLowerCase();
+
+  if (envValue === 'parallel') {
+    return 'parallel';
+  }
+
+  return DEFAULT_MODE;
+}
+
+/**
+ * Get full environment configuration
+ */
+export function getEnvConfig(): { agents: InvokableAgentId[]; mode: ReviewMode } {
+  return {
+    agents: getDefaultAgents(),
+    mode: getReviewMode()
+  };
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
 /**
  * Get agent config by ID

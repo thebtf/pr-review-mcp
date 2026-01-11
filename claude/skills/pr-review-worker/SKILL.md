@@ -9,24 +9,65 @@ model: sonnet
 user-invocable: false
 disable-model-invocation: true
 allowed-tools:
-  - Read
-  - Edit
-  - Write
-  - Glob
-  - Grep
   - Bash
   - mcp__pr-review__pr_claim_work
   - mcp__pr-review__pr_list
   - mcp__pr-review__pr_get
   - mcp__pr-review__pr_resolve
   - mcp__pr-review__pr_report_progress
-  - LSP
+  # Serena MCP tools for code operations:
+  - mcp__serena__get_symbols_overview
+  - mcp__serena__find_symbol
+  - mcp__serena__find_referencing_symbols
+  - mcp__serena__replace_symbol_body
+  - mcp__serena__insert_after_symbol
+  - mcp__serena__insert_before_symbol
+  - mcp__serena__rename_symbol
+  - mcp__serena__search_for_pattern
+  - mcp__serena__list_dir
+  - mcp__serena__find_file
+  # Serena reflection tools (MANDATORY):
+  - mcp__serena__think_about_collected_information
+  - mcp__serena__think_about_task_adherence
+  - mcp__serena__think_about_whether_you_are_done
+  # Serena memory tools:
+  - mcp__serena__read_memory
+  - mcp__serena__write_memory
+  - mcp__serena__list_memories
+# FORBIDDEN (use Serena instead):
+# - Read, Edit, Write, Grep, Glob
 # NOTE: pr_labels is NOT allowed - only orchestrator manages labels
 ---
 
 # PR Review Worker
 
 Claim file partitions and resolve their review comments.
+
+---
+
+## MANDATORY: Use Serena for Code Operations
+
+**DO NOT use Read/Edit/Write/Grep/Glob. Use Serena MCP tools instead.**
+
+| Task | WRONG | RIGHT |
+|------|-------|-------|
+| Read file structure | `Read file.cs` | `mcp__serena__get_symbols_overview` |
+| Find method | `Grep "MethodName"` | `mcp__serena__find_symbol` |
+| Find usages | `Grep "ClassName"` | `mcp__serena__find_referencing_symbols` |
+| Edit method | `Edit file.cs` | `mcp__serena__replace_symbol_body` |
+| Add method | `Edit file.cs` | `mcp__serena__insert_after_symbol` |
+| Rename | Multiple `Edit` | `mcp__serena__rename_symbol` |
+| Search text | `Grep` | `mcp__serena__search_for_pattern` |
+
+**Serena Reflection Tools (MANDATORY):**
+
+| When | Tool |
+|------|------|
+| After finding symbols | `think_about_collected_information` |
+| Before making changes | `think_about_task_adherence` |
+| After completing comment | `think_about_whether_you_are_done` |
+
+**Serena provides symbol-level precision. Edits are atomic and safe.**
 
 ---
 
@@ -71,6 +112,27 @@ This skill is NOT for direct user invocation. Only the pr-review orchestrator ma
 
 ## Workflow
 
+### Step 0: MCP BOOTSTRAP (MANDATORY FIRST)
+
+**Before ANY other action, load required MCP tools via MCPSearch:**
+
+```
+MCPSearch query: "select:mcp__pr-review__pr_claim_work"
+MCPSearch query: "select:mcp__pr-review__pr_get"
+MCPSearch query: "select:mcp__pr-review__pr_resolve"
+MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+MCPSearch query: "select:mcp__serena__get_symbols_overview"
+MCPSearch query: "select:mcp__serena__find_symbol"
+MCPSearch query: "select:mcp__serena__replace_symbol_body"
+MCPSearch query: "select:mcp__serena__search_for_pattern"
+```
+
+**If any tool fails to load:** Report error and EXIT immediately.
+
+**Self-healing:** If MCP tool call fails with "unknown tool" later, re-run MCPSearch for that tool and retry once.
+
+**-> IMMEDIATELY proceed to Step 1**
+
 ### Step 1: CLAIM PARTITION
 ```
 pr_claim_work {
@@ -105,13 +167,13 @@ pr_get { owner, repo, pr, id: threadId }
 | NEVER | formatting, style, naming, typo, comment, whitespace | Skip investigation |
 
 **IF ALWAYS:**
-1. Read full affected file
-2. `Grep pattern="functionName" path="src/" output_mode="content" -C=3`
-3. `LSP goToDefinition` if external call present
+1. `mcp__serena__get_symbols_overview` for affected file
+2. `mcp__serena__search_for_pattern` for related code
+3. `mcp__serena__find_symbol` if external call present
 4. Analyze: "Is there a deeper issue?"
 
 **IF CONDITIONAL:**
-1. Read +/-50 lines around change
+1. `mcp__serena__find_symbol` with `include_body=True` for context
 2. Quick analysis
 
 **IF deeper issue found:** Append to `.agent/status/TECHNICAL_DEBT.md`:
@@ -152,12 +214,21 @@ pr_report_progress {
 
 **MANDATORY: When `status: no_work` (no more partitions), run build/test before exiting.**
 
+**Detect project type by marker files:**
+
+| Marker File | Project Type | Build Command | Test Command |
+|-------------|--------------|---------------|--------------|
+| `package.json` | Node.js/TS | `npm run build` | `npm test` |
+| `*.csproj` / `*.sln` | .NET | `dotnet build` | `dotnet test` |
+| `Cargo.toml` | Rust | `cargo build` | `cargo test` |
+| `go.mod` | Go | `go build ./...` | `go test ./...` |
+| `pyproject.toml` / `setup.py` | Python | `pip install -e .` | `pytest` |
+| `Makefile` | Generic | `make` | `make test` |
+
+**Detection logic:**
 ```bash
-# Detect project type and run appropriate build
-npm run build   # Node.js/TypeScript
-dotnet build    # .NET
-cargo build     # Rust
-go build ./...  # Go
+# Check root directory for marker files, use first match
+ls package.json *.csproj *.sln Cargo.toml go.mod pyproject.toml setup.py Makefile 2>/dev/null
 ```
 
 **If build fails:**
@@ -167,10 +238,6 @@ go build ./...  # Go
 4. **DO NOT exit with broken build**
 
 **If tests available:**
-```bash
-npm test        # or: dotnet test, cargo test, go test ./...
-```
-
 - Fix any test failures caused by your changes
 - If test fails in unrelated code, note in report but don't block
 
@@ -195,32 +262,49 @@ npm test        # or: dotnet test, cargo test, go test ./...
 ## FORBIDDEN
 
 ```
+ORCHESTRATOR TOOLS (workers must NOT use):
 X pr_labels - only orchestrator manages labels
 X pr_merge - workers never merge
 X pr_invoke - workers don't invoke other agents
+
+GENERIC TOOLS (use Serena instead):
+X Read - use mcp__serena__get_symbols_overview or find_symbol
+X Edit - use mcp__serena__replace_symbol_body
+X Write - use mcp__serena__insert_after_symbol
+X Grep - use mcp__serena__search_for_pattern
+X Glob - use mcp__serena__find_file
+
+WORKFLOW VIOLATIONS:
 X Asking user which file to process
 X Asking user how to fix a comment
 X Blocking on tech debt (record and continue)
 X Exiting with broken build
 ```
 
+**If you need Read/Edit/Grep — use Serena equivalents. Serena provides symbol-level precision.**
+
 ---
 
 ## Example Session
 
 ```
+0. MCPSearch "select:mcp__pr-review__pr_claim_work" -> tool loaded
+   MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
+   ... (load all required tools)
 1. pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
 2. pr_get { id: "t1" } -> { body: "Add null check", aiPrompt: "..." }
-3. Read src/App.tsx
-4. Edit: add null check
-5. pr_resolve { threadId: "t1" }
-6. pr_get { id: "t2" } -> ...
-7. ... fix and resolve ...
-8. pr_report_progress { file: "src/App.tsx", status: "done" }
-9. pr_claim_work -> status: claimed, partition: { file: "src/utils.ts", ... }
-10. ... continue ...
-11. pr_claim_work -> status: no_work
-12. npm run build -> success
-13. npm test -> success
-14. EXIT
+3. mcp__serena__get_symbols_overview { relative_path: "src/App.tsx" }
+4. mcp__serena__find_symbol { name_path: "Component/method", include_body: true }
+5. mcp__serena__replace_symbol_body -> add null check
+6. pr_resolve { threadId: "t1" }
+7. pr_get { id: "t2" } -> ...
+8. ... fix and resolve ...
+9. pr_report_progress { file: "src/App.tsx", status: "done" }
+10. pr_claim_work -> status: claimed, partition: { file: "src/utils.ts", ... }
+11. ... continue ...
+12. pr_claim_work -> status: no_work
+13. Detect project type (package.json / *.csproj / etc.)
+14. Run build command -> success
+15. Run test command -> success
+16. EXIT
 ```
