@@ -16,6 +16,16 @@ import { fetchAllThreads } from './shared.js';
 import { SEVERITY_ORDER, type Severity } from '../extractors/severity.js';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Threshold for auto-force replacement of old runs (5 minutes)
+ * Workers typically complete quickly, so runs older than this are likely stale
+ */
+const OLD_RUN_THRESHOLD_MS = 5 * 60 * 1000;
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -190,8 +200,7 @@ export async function prClaimWork(
 
       // Auto-allow replacement if run is old (>5 minutes) - workers complete quickly
       const runAge = stateManager.getRunAge();
-      const OLD_RUN_THRESHOLD = 5 * 60 * 1000; // 5 minutes
-      const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD) || hasCompletedAt;
+      const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD_MS) || hasCompletedAt;
 
       if (isActive && !force && !autoForce) {
         // Current run is still active - cannot replace (unless forced or old/completed)
@@ -272,7 +281,7 @@ export async function prReportProgress(
   return {
     status: 'success',
     file,
-    new_status: status
+    new_status: status === 'skipped' ? 'done' : status
   };
 }
 
@@ -292,6 +301,15 @@ export async function prGetWorkStatus(
 export async function prResetCoordination(
   input: ResetCoordinationInput
 ) {
+  // Validate confirm field
+  if (!input.confirm) {
+    throw new StructuredError(
+      'permission',
+      'Must explicitly confirm reset by passing confirm=true',
+      false
+    );
+  }
+
   const currentRun = stateManager.getCurrentRun();
   const wasActive = stateManager.isRunActive();
 

@@ -10,11 +10,11 @@ user-invocable: false
 disable-model-invocation: true
 allowed-tools:
   - Bash
-  - mcp__pr-review__pr_claim_work
-  - mcp__pr-review__pr_list
-  - mcp__pr-review__pr_get
-  - mcp__pr-review__pr_resolve
-  - mcp__pr-review__pr_report_progress
+  - mcp__pr__pr_claim_work
+  - mcp__pr__pr_list
+  - mcp__pr__pr_get
+  - mcp__pr__pr_resolve
+  - mcp__pr__pr_report_progress
   # Serena MCP tools for code operations:
   - mcp__serena__get_symbols_overview
   - mcp__serena__find_symbol
@@ -117,10 +117,10 @@ This skill is NOT for direct user invocation. Only the pr-review orchestrator ma
 **Before ANY other action, load required MCP tools via MCPSearch:**
 
 ```
-MCPSearch query: "select:mcp__pr-review__pr_claim_work"
-MCPSearch query: "select:mcp__pr-review__pr_get"
-MCPSearch query: "select:mcp__pr-review__pr_resolve"
-MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+MCPSearch query: "select:mcp__pr__pr_claim_work"
+MCPSearch query: "select:mcp__pr__pr_get"
+MCPSearch query: "select:mcp__pr__pr_resolve"
+MCPSearch query: "select:mcp__pr__pr_report_progress"
 MCPSearch query: "select:mcp__serena__get_symbols_overview"
 MCPSearch query: "select:mcp__serena__find_symbol"
 MCPSearch query: "select:mcp__serena__replace_symbol_body"

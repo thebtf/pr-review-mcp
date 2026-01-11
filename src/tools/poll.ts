@@ -1,7 +1,7 @@
 /**
  * pr_poll_updates tool - Stateless polling for PR review updates
  *
- * Returns new comments, resolved threads, commits, and check status since a timestamp.
+ * Returns new comments, resolved threads, commits, check status, and agent completion since a timestamp.
  * Enables review cycle automation without stateful monitoring.
  */
 
@@ -9,7 +9,8 @@ import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
-import type { ListComment, CommentSource } from '../github/types.js';
+import type { ListComment } from '../github/types.js';
+import { getDefaultAgents, INVOKABLE_AGENTS, type InvokableAgentId } from '../agents/registry.js';
 
 // ============================================================================
 // Schema
@@ -20,7 +21,7 @@ export const PollInputSchema = z.object({
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive'),
   since: z.string().datetime().optional(),
-  include: z.array(z.enum(['comments', 'reviews', 'commits', 'status'])).optional()
+  include: z.array(z.enum(['comments', 'reviews', 'commits', 'status', 'agents'])).optional()
 });
 
 export type PollInput = z.infer<typeof PollInputSchema>;
@@ -42,6 +43,18 @@ export interface CheckInfo {
   description: string | null;
 }
 
+export interface AgentStatus {
+  agentId: InvokableAgentId;
+  name: string;
+  ready: boolean;
+  lastComment?: string; // ISO timestamp of last comment
+}
+
+export interface AgentsStatus {
+  allAgentsReady: boolean;
+  agents: AgentStatus[];
+}
+
 export interface PollOutput {
   hasUpdates: boolean;
   cursor: string; // ISO timestamp for next poll
@@ -58,12 +71,91 @@ export interface PollOutput {
       pending: number;
       checks: CheckInfo[];
     } | null;
+    agentsStatus: AgentsStatus | null;
   };
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Check if an author matches an agent's pattern
+ */
+function matchesAuthorPattern(author: string, pattern: string | string[]): boolean {
+  const patterns = Array.isArray(pattern) ? pattern : [pattern];
+  const lowerAuthor = author.toLowerCase();
+  return patterns.some(p => lowerAuthor.includes(p.toLowerCase()));
+}
+
+/**
+ * Fetch agent completion status by checking for their comments/reviews
+ */
+async function fetchAgentStatus(
+  owner: string,
+  repo: string,
+  pr: number
+): Promise<AgentsStatus> {
+  const octokit = getOctokit();
+  const configuredAgents = getDefaultAgents();
+
+  // Get issue comments and reviews to check for agent activity
+  const [issueComments, reviews] = await Promise.all([
+    octokit.paginate(octokit.issues.listComments, {
+      owner,
+      repo,
+      issue_number: pr,
+      per_page: 100
+    }),
+    octokit.paginate(octokit.pulls.listReviews, {
+      owner,
+      repo,
+      pull_number: pr,
+      per_page: 100
+    })
+  ]);
+
+  const agentStatuses: AgentStatus[] = configuredAgents.map(agentId => {
+    const config = INVOKABLE_AGENTS[agentId];
+    const pattern = config.authorPattern;
+
+    // Check issue comments
+    const agentIssueComments = issueComments.filter(c =>
+      c.user && matchesAuthorPattern(c.user.login, pattern)
+    );
+
+    // Check reviews
+    const agentReviews = reviews.filter(r =>
+      r.user && matchesAuthorPattern(r.user.login, pattern)
+    );
+
+    const hasActivity = agentIssueComments.length > 0 || agentReviews.length > 0;
+
+    // Find latest timestamp
+    let lastComment: string | undefined;
+    const allDates = [
+      ...agentIssueComments.map(c => c.created_at),
+      ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null)
+    ];
+    if (allDates.length > 0) {
+      lastComment = allDates.sort().reverse()[0];
+    }
+
+    return {
+      agentId,
+      name: config.name,
+      ready: hasActivity,
+      lastComment
+    };
+  });
+
+  const allAgentsReady = agentStatuses.every(a => a.ready);
+
+  return {
+    allAgentsReady,
+    agents: agentStatuses
+  };
+}
 
 /**
  * Fetch new commits since timestamp
@@ -151,8 +243,7 @@ async function fetchCheckStatus(
 }
 
 /**
- * Find resolved threads by comparing with previous state
- * Since we don't have previous state, we track threads resolved recently
+ * Find resolved threads
  */
 async function fetchResolvedThreadIds(
   owner: string,
@@ -164,12 +255,7 @@ async function fetchResolvedThreadIds(
   if (!since) return [];
 
   try {
-    // Fetch all threads and filter to recently resolved
     const { comments } = await fetchAllThreads(client, owner, repo, pr, { maxItems: 500 });
-
-    // Return IDs of resolved threads
-    // Note: We can't determine WHEN they were resolved without timeline API
-    // So we return all resolved threads - the agent can track state externally
     return comments
       .filter(c => c.resolved)
       .map(c => c.threadId);
@@ -189,13 +275,13 @@ export async function prPollUpdates(
   const validated = PollInputSchema.parse(input);
   const { owner, repo, pr, since, include } = validated;
 
-  // Default: include all update types
+  // Default: include all update types except agents
   const includeTypes = include || ['comments', 'reviews', 'commits', 'status'];
 
   const now = new Date().toISOString();
 
   // Parallel fetch of all update types
-  const [commentsResult, commits, checkStatus, resolvedThreads] = await Promise.all([
+  const [commentsResult, commits, checkStatus, resolvedThreads, agentsStatus] = await Promise.all([
     includeTypes.includes('comments') || includeTypes.includes('reviews')
       ? fetchAllThreads(client, owner, repo, pr, { maxItems: 100 })
       : Promise.resolve({ comments: [], cursor: null, hasMore: false }),
@@ -210,7 +296,11 @@ export async function prPollUpdates(
 
     includeTypes.includes('reviews')
       ? fetchResolvedThreadIds(owner, repo, pr, since || null, client)
-      : Promise.resolve([])
+      : Promise.resolve([]),
+
+    includeTypes.includes('agents')
+      ? fetchAgentStatus(owner, repo, pr)
+      : Promise.resolve(null)
   ]);
 
   // Filter comments by timestamp if since is provided
@@ -221,7 +311,6 @@ export async function prPollUpdates(
     newComments = commentsResult.comments
       .filter(c => {
         if (!sinceDate) return true;
-        // ProcessedComment has createdAt/updatedAt
         const commentDate = c.updatedAt ? new Date(c.updatedAt) : null;
         return commentDate && commentDate > sinceDate;
       })
@@ -251,7 +340,8 @@ export async function prPollUpdates(
       newComments,
       resolvedThreads,
       newCommits: commits,
-      checkStatus
+      checkStatus,
+      agentsStatus
     }
   };
 }

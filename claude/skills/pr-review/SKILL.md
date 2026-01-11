@@ -11,17 +11,17 @@ model: sonnet
 allowed-tools:
   - Task
   - Bash
-  - mcp__pr-review__pr_summary
-  - mcp__pr-review__pr_get_work_status
-  - mcp__pr-review__pr_labels
-  - mcp__pr-review__pr_invoke
-  - mcp__pr-review__pr_poll_updates
+  - mcp__pr__pr_summary
+  - mcp__pr__pr_get_work_status
+  - mcp__pr__pr_labels
+  - mcp__pr__pr_invoke
+  - mcp__pr__pr_poll_updates
 # FORBIDDEN for orchestrator (workers only):
 # - Read, Edit, Write, Grep, Glob
-# - mcp__pr-review__pr_list
-# - mcp__pr-review__pr_get
-# - mcp__pr-review__pr_resolve
-# - mcp__pr-review__pr_claim_work
+# - mcp__pr__pr_list
+# - mcp__pr__pr_get
+# - mcp__pr__pr_resolve
+# - mcp__pr__pr_claim_work
 ---
 
 # PR Review Orchestrator
@@ -125,7 +125,9 @@ This is how Claude Code achieves parallelism. Sequential calls = no parallelism.
 git remote get-url origin
 # Extract: github.com/OWNER/REPO.git -> owner=OWNER, repo=REPO
 ```
-If PR number unknown, check recent PRs or ask ONCE at start.
+If PR number unknown, check recent PRs from git branch tracking or CI environment variables (GITHUB_PR, CI_PULL_REQUEST).
+
+**Note:** If absolutely no PR context exists, this step permits ONE initial prompt for PR number only (exception to non-interactive mode).
 
 **-> IMMEDIATELY proceed to Step 1**
 
@@ -145,7 +147,11 @@ pr_labels { owner, repo, pr, action: "get" }
 pr_get_work_status {}
 ```
 - `isActive === true` AND `runAge < 300000` -> **ABORT** (another orchestrator running)
-- `isActive === true` AND `runAge >= 300000` -> Stale run, proceed
+- `isActive === true` AND `runAge >= 300000` -> Stale run, reset coordination:
+  ```
+  pr_reset_coordination { owner, repo, pr }
+  ```
+  Then proceed
 
 **-> IMMEDIATELY proceed to Step 3**
 
@@ -167,13 +173,19 @@ Triggers configured agents (coderabbit, gemini, codex, copilot, sourcery, qodo).
 
 ### Step 5: POLL & WAIT
 ```
-pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
+pr_poll_updates { owner, repo, pr, include: ["comments", "status"] }
 ```
 
-Check convergence:
-- `allAgentsReady: false` -> wait 30s, poll again
-- `allAgentsReady: true, unresolved > 0` -> proceed to Step 6
-- `allAgentsReady: true, unresolved === 0` -> proceed to Step 8
+Check convergence (max 20 iterations to prevent infinite loops):
+- `hasUpdates: true` with new comments -> wait 30s, poll again (agents still reviewing)
+- `hasUpdates: false` and `checkStatus.state === "pending"` -> wait 30s, poll again
+- `hasUpdates: false` and checks stable -> Get summary:
+  ```
+  pr_summary { owner, repo, pr }
+  ```
+  - If `unresolved > 0` -> proceed to Step 6
+  - If `unresolved === 0` -> proceed to Step 8
+- After 20 poll iterations -> force proceed to Step 6 or 8 based on current state
 
 **-> IMMEDIATELY proceed based on condition**
 
@@ -196,17 +208,17 @@ Execute skill pr-review-worker.
 
 Parameters:
 - agent_id: worker-{N}
-- owner: {OWNER}
-- repo: {REPO}
-- pr: {PR_NUMBER}
+- owner: ${OWNER}
+- repo: ${REPO}
+- pr: ${PR_NUMBER}
 - spawned_by_orchestrator: true
 
 CRITICAL FIRST STEP (MCP tool bootstrap):
 1) Call MCPSearch to load MCP tools for "pr-review" and "serena" servers:
-   - MCPSearch query: "select:mcp__pr-review__pr_claim_work"
-   - MCPSearch query: "select:mcp__pr-review__pr_get"
-   - MCPSearch query: "select:mcp__pr-review__pr_resolve"
-   - MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+   - MCPSearch query: "select:mcp__pr__pr_claim_work"
+   - MCPSearch query: "select:mcp__pr__pr_get"
+   - MCPSearch query: "select:mcp__pr__pr_resolve"
+   - MCPSearch query: "select:mcp__pr__pr_report_progress"
    - MCPSearch query: "select:mcp__serena__get_symbols_overview"
    - MCPSearch query: "select:mcp__serena__find_symbol"
    - MCPSearch query: "select:mcp__serena__replace_symbol_body"
@@ -236,7 +248,16 @@ pr_get_work_status {}
 ```
 Poll every 30s until all partitions complete:
 - Check `pendingFiles`, `completedFiles`, `failedFiles`
-- If worker stale (>5min), spawn replacement
+- If worker stale (>5min since lastHeartbeat), spawn replacement:
+  ```
+  Task(
+    subagent_type="general-purpose",
+    run_in_background=true,
+    model="sonnet",
+    description="PR replacement worker",
+    prompt="Execute skill pr-review-worker.\n\nParameters:\n- agent_id: worker-replacement-{TIMESTAMP}\n- owner: ${OWNER}\n- repo: ${REPO}\n- pr: ${PR_NUMBER}\n- spawned_by_orchestrator: true\n\n[...same MCP bootstrap as Step 6...]"
+  )
+  ```
 - Continue until all files processed
 
 **-> IMMEDIATELY proceed to Step 8 when done**
@@ -258,13 +279,26 @@ Poll every 30s until all partitions complete:
 
 **If build fails:**
 1. Analyze error output
-2. Spawn repair worker to fix
+2. Spawn repair worker to fix:
+   ```
+   Task(
+     subagent_type="general-purpose",
+     run_in_background=false,
+     model="sonnet",
+     description="PR repair worker",
+     prompt="Execute skill pr-review-worker.\n\nParameters:\n- agent_id: worker-repair\n- owner: ${OWNER}\n- repo: ${REPO}\n- pr: ${PR_NUMBER}\n- spawned_by_orchestrator: true\n\nFocus: Fix build errors reported below.\n[Include build error output]\n\n[...same MCP bootstrap as Step 6...]"
+   )
+   ```
 3. Re-run build until success
 4. **DO NOT proceed with broken build**
 
 **If tests fail:**
 - Caused by review changes -> fix it
 - Pre-existing -> note in report, continue
+
+**Re-review cycle:**
+- If new AI comments posted during fixes -> Return to Step 5 (max 3 re-review cycles)
+- After 3 cycles OR no new comments -> Proceed to Step 9
 
 **-> Return to Step 5 (poll for re-review) OR proceed to Step 9**
 

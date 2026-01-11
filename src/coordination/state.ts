@@ -368,36 +368,64 @@ class CoordinationStateManager {
 
   /**
    * Add new partitions to an existing run (for dynamic partition refresh)
-   * Only adds partitions for files that don't already exist in the run
-   * Reopens the run if it was completed
-   * @returns Number of new partitions added
+   * Merges new comments into existing file partitions or creates new partitions
+   * Reopens the run if it was completed and work was added/updated
+   * @returns Number of partitions touched (added or updated with new comments)
    */
   addPartitions(partitions: FilePartition[]): number {
     if (!this.currentRun) return 0;
 
-    let added = 0;
+    let touched = 0;
+
     for (const p of partitions) {
-      // Only add if file doesn't already have a partition
-      if (!this.currentRun.partitions.has(p.file)) {
+      const existing = this.currentRun.partitions.get(p.file);
+      if (!existing) {
+        // New file partition - add it
         this.currentRun.partitions.set(p.file, { ...p, status: 'pending' });
-        added++;
+        touched++;
+        continue;
+      }
+
+      // Merge new comments for existing file partitions
+      const existingComments = new Set(existing.comments ?? []);
+      const incomingComments = p.comments ?? [];
+      let hasNew = false;
+      for (const c of incomingComments) {
+        if (!existingComments.has(c)) {
+          existingComments.add(c);
+          hasNew = true;
+        }
+      }
+
+      if (hasNew) {
+        // If the partition was already completed, reopen it for new work
+        const shouldReopen = existing.status === 'done' || existing.status === 'failed';
+        this.currentRun.partitions.set(p.file, {
+          ...existing,
+          comments: Array.from(existingComments),
+          status: shouldReopen ? 'pending' : existing.status,
+          claimedBy: shouldReopen ? undefined : existing.claimedBy,
+          claimedAt: shouldReopen ? undefined : existing.claimedAt,
+          result: shouldReopen ? undefined : existing.result
+        });
+        touched++;
       }
     }
 
-    // Reopen run if it was completed and we added new work
-    if (added > 0 && this.currentRun.completedAt) {
-      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added ${added} new partitions`);
+    // Reopen run if it was completed and we added/updated work
+    if (touched > 0 && this.currentRun.completedAt) {
+      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added/updated ${touched} partitions`);
       this.currentRun.completedAt = undefined;
     }
 
-    return added;
+    return touched;
   }
 
   /**
    * Check if all current partitions are done/failed (for refresh check)
    */
   allPartitionsDone(): boolean {
-    if (!this.currentRun) return true;
+    if (!this.currentRun) return false;
     return Array.from(this.currentRun.partitions.values()).every(
       p => p.status === 'done' || p.status === 'failed'
     );
