@@ -114,10 +114,16 @@ export function getDefaultAgents(): InvokableAgentId[] {
     return DEFAULT_AGENTS;
   }
 
-  const agents = envValue
+  const rawAgents = envValue
     .split(',')
-    .map(s => s.trim().toLowerCase())
-    .filter((id): id is InvokableAgentId => isInvokableAgent(id));
+    .map(s => s.trim().toLowerCase());
+
+  const invalidAgents = rawAgents.filter(id => !isInvokableAgent(id));
+  if (invalidAgents.length > 0) {
+    console.warn(`[registry] Invalid agent IDs in PR_REVIEW_AGENTS: ${invalidAgents.join(', ')}`);
+  }
+
+  const agents = rawAgents.filter((id): id is InvokableAgentId => isInvokableAgent(id));
 
   return agents.length > 0 ? agents : DEFAULT_AGENTS;
 }

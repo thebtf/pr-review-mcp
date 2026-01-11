@@ -117,6 +117,9 @@ export const QUERIES = {
             changedFiles
             reviewThreads {
               totalCount
+              nodes {
+                isResolved
+              }
             }
             comments {
               totalCount
