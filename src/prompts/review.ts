@@ -3,6 +3,12 @@
  *
  * Generates dynamic prompt with pre-fetched data for autonomous PR review processing.
  * Supports single PR or batch processing of all open PRs.
+ * 
+ * Usage:
+ * - /pr:review                    → All PRs in current repo (infer from git)
+ * - /pr:review 4                  → PR #4 in current repo
+ * - /pr:review https://...        → PR from URL
+ * - /pr:review owner/repo#123     → PR from short format
  */
 
 import { GitHubClient } from '../github/client.js';
@@ -16,10 +22,63 @@ import { getEnvConfig, type InvokableAgentId, type ReviewMode } from '../agents/
 // ============================================================================
 
 export interface ReviewPromptArgs {
+  /** Repository owner */
   owner?: string;
+  /** Repository name */
   repo?: string;
+  /** PR number, GitHub URL, or short format (owner/repo#123) */
   pr?: string;
+  /** Number of workers */
   workers?: string;
+}
+
+// ============================================================================
+// URL Parsing
+// ============================================================================
+
+interface ParsedPRUrl {
+  owner: string;
+  repo: string;
+  pr: number;
+}
+
+/**
+ * Parse GitHub PR URL or short format
+ * Supports:
+ * - https://github.com/owner/repo/pull/123
+ * - owner/repo#123
+ */
+function parseGitHubPRUrl(input: string): ParsedPRUrl | null {
+  // Full URL pattern
+  const urlPattern = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
+  const urlMatch = input.match(urlPattern);
+  if (urlMatch) {
+    return {
+      owner: urlMatch[1],
+      repo: urlMatch[2],
+      pr: parseInt(urlMatch[3], 10)
+    };
+  }
+
+  // Short format: owner/repo#123
+  const shortPattern = /^([^/]+)\/([^#]+)#(\d+)$/;
+  const shortMatch = input.match(shortPattern);
+  if (shortMatch) {
+    return {
+      owner: shortMatch[1],
+      repo: shortMatch[2],
+      pr: parseInt(shortMatch[3], 10)
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Check if input is just a PR number
+ */
+function isPRNumber(input: string): boolean {
+  return /^\d+$/.test(input.trim());
 }
 
 interface PRTarget {
@@ -47,6 +106,10 @@ interface PromptContext {
     agents: InvokableAgentId[];
     mode: ReviewMode;
   };
+  /** If true, need to infer owner/repo from git remote */
+  inferRepo?: boolean;
+  /** Requested PR number when only number provided */
+  requestedPR?: number;
 }
 
 // ============================================================================
@@ -167,10 +230,10 @@ Parameters:
 
 CRITICAL FIRST STEP (MCP tool bootstrap):
 1) Call MCPSearch to load MCP tools:
-   - MCPSearch query: "select:mcp__pr-review__pr_claim_work"
-   - MCPSearch query: "select:mcp__pr-review__pr_get"
-   - MCPSearch query: "select:mcp__pr-review__pr_resolve"
-   - MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+   - MCPSearch query: "select:mcp__pr__pr_claim_work"
+   - MCPSearch query: "select:mcp__pr__pr_get"
+   - MCPSearch query: "select:mcp__pr__pr_resolve"
+   - MCPSearch query: "select:mcp__pr__pr_report_progress"
    - MCPSearch query: "select:mcp__serena__find_symbol"
    - MCPSearch query: "select:mcp__serena__replace_symbol_body"
 
@@ -229,6 +292,11 @@ export async function generateReviewPrompt(
 ): Promise<string> {
   const context = await buildContext(args, client);
 
+  // Need to infer repo from git
+  if (context.inferRepo) {
+    return generateInferRepoPrompt(context);
+  }
+
   if (context.targets.length === 0) {
     return generateNoTargetsPrompt(args);
   }
@@ -241,6 +309,39 @@ export async function generateReviewPrompt(
 }
 
 /**
+ * Normalize arguments - parse URL or short format if provided
+ */
+function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string; pr?: number; prNumberOnly?: boolean } {
+  // Check if 'pr' arg is a URL or short format
+  if (args.pr) {
+    const parsed = parseGitHubPRUrl(args.pr);
+    if (parsed) {
+      return {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        pr: parsed.pr
+      };
+    }
+
+    // Check if it's just a number
+    if (isPRNumber(args.pr)) {
+      return {
+        owner: args.owner,
+        repo: args.repo,
+        pr: parseInt(args.pr, 10),
+        prNumberOnly: !args.owner || !args.repo
+      };
+    }
+  }
+
+  return {
+    owner: args.owner,
+    repo: args.repo,
+    pr: args.pr ? parseInt(args.pr, 10) : undefined
+  };
+}
+
+/**
  * Build context with pre-fetched data
  */
 async function buildContext(
@@ -250,22 +351,34 @@ async function buildContext(
   const desiredWorkers = parseInt(args.workers || '3', 10);
   const envConfig = getEnvConfig();
 
-  // If specific PR provided
-  if (args.owner && args.repo && args.pr) {
-    const pr = parseInt(args.pr, 10);
+  // Normalize args (parse URL if provided)
+  const normalized = normalizeArgs(args);
 
+  // If we need to infer owner/repo (no args or just PR number)
+  if (!normalized.owner || !normalized.repo) {
+    return {
+      targets: [],
+      desiredWorkers,
+      envConfig,
+      inferRepo: true,
+      requestedPR: normalized.pr
+    };
+  }
+
+  // If specific PR provided (either directly or via URL)
+  if (normalized.pr) {
     try {
       // Pre-fetch summary and work status in parallel
       const [summary, workStatus] = await Promise.all([
-        prSummary({ owner: args.owner, repo: args.repo, pr }, client),
+        prSummary({ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }, client),
         prGetWorkStatus({})
       ]);
 
       return {
         targets: [{
-          owner: args.owner,
-          repo: args.repo,
-          pr,
+          owner: normalized.owner,
+          repo: normalized.repo,
+          pr: normalized.pr,
           unresolved: summary.unresolved
         }],
         currentSummary: {
@@ -284,7 +397,7 @@ async function buildContext(
     } catch {
       // If pre-fetch fails, return minimal context
       return {
-        targets: [{ owner: args.owner, repo: args.repo, pr }],
+        targets: [{ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }],
         desiredWorkers,
         envConfig
       };
@@ -292,35 +405,74 @@ async function buildContext(
   }
 
   // If only owner/repo - get all open PRs
-  if (args.owner && args.repo) {
-    try {
-      const prs = await prListPRs(
-        { owner: args.owner, repo: args.repo, state: 'OPEN', limit: 20 },
-        client
-      );
+  try {
+    const prs = await prListPRs(
+      { owner: normalized.owner, repo: normalized.repo, state: 'OPEN', limit: 20 },
+      client
+    );
 
-      const targets: PRTarget[] = prs.pullRequests.map(p => ({
-        owner: args.owner!,
-        repo: args.repo!,
-        pr: p.number,
-        title: p.title,
-        unresolved: p.stats.reviewThreads
-      }));
+    const targets: PRTarget[] = prs.pullRequests.map(p => ({
+      owner: normalized.owner!,
+      repo: normalized.repo!,
+      pr: p.number,
+      title: p.title,
+      unresolved: p.stats.reviewThreads
+    }));
 
-      // Filter to PRs with unresolved comments
-      const withComments = targets.filter(t => (t.unresolved ?? 0) > 0);
+    // Filter to PRs with unresolved comments
+    const withComments = targets.filter(t => (t.unresolved ?? 0) > 0);
 
-      return {
-        targets: withComments.length > 0 ? withComments : targets.slice(0, 5),
-        desiredWorkers,
-        envConfig
-      };
-    } catch {
-      return { targets: [], desiredWorkers, envConfig };
-    }
+    return {
+      targets: withComments.length > 0 ? withComments : targets.slice(0, 5),
+      desiredWorkers,
+      envConfig
+    };
+  } catch {
+    return { targets: [], desiredWorkers, envConfig };
   }
+}
 
-  return { targets: [], desiredWorkers, envConfig };
+/**
+ * Generate prompt when repo needs to be inferred from git
+ */
+function generateInferRepoPrompt(context: PromptContext): string {
+  const { desiredWorkers, envConfig, requestedPR } = context;
+
+  const prInstruction = requestedPR
+    ? `Process PR **#${requestedPR}** in the current repository.`
+    : `Process **all open PRs** with unresolved comments in the current repository.`;
+
+  return `# PR Review
+
+## Step 0: RESOLVE REPOSITORY
+
+**First, determine the repository from git remote:**
+
+\`\`\`bash
+git remote get-url origin
+\`\`\`
+
+Parse the output to extract \`owner\` and \`repo\`:
+- \`https://github.com/OWNER/REPO.git\` → owner=OWNER, repo=REPO
+- \`git@github.com:OWNER/REPO.git\` → owner=OWNER, repo=REPO
+
+${prInstruction}
+
+## Configuration
+- **Agents to invoke**: ${envConfig.agents.join(', ')}
+- **Review mode**: ${envConfig.mode}
+- **Workers**: ${desiredWorkers}
+${requestedPR ? `- **Target PR**: #${requestedPR}` : '- **Target**: All open PRs with comments'}
+
+---
+
+**After resolving owner/repo, proceed with the workflow:**
+
+${ORCHESTRATOR_WORKFLOW}
+
+---
+
+**START NOW. Execute Step 0 to get repository info.**`;
 }
 
 /**
@@ -330,19 +482,22 @@ function generateNoTargetsPrompt(args: ReviewPromptArgs): string {
   if (!args.owner || !args.repo) {
     return `# PR Review
 
-No repository specified. Please provide:
-- \`owner\`: Repository owner (username or organization)
-- \`repo\`: Repository name
-- \`pr\` (optional): Pull request number, or omit for all open PRs
+No repository specified and could not be inferred.
 
-Example: \`/pr-review:review owner=myorg repo=myproject pr=100\``;
+**Usage:**
+- \`/pr:review\` — All PRs in current repo (requires git remote)
+- \`/pr:review 4\` — PR #4 in current repo
+- \`/pr:review https://github.com/owner/repo/pull/123\` — Specific PR
+- \`/pr:review owner/repo#123\` — Short format
+
+Alternatively, run from a git repository directory.`;
   }
 
   return `# PR Review: ${args.owner}/${args.repo}
 
 No open PRs found with review comments to process.
 
-To review a specific PR, provide the \`pr\` argument.`;
+To review a specific PR, provide the PR number: \`/pr:review 4\``;
 }
 
 /**
@@ -450,21 +605,11 @@ ${ORCHESTRATOR_WORKFLOW}
 export const REVIEW_PROMPT_DEFINITION = {
   name: 'review',
   title: 'PR Review Orchestrator',
-  description: 'Autonomous multi-agent PR review. Spawns parallel workers to process all comments until ready for merge.',
+  description: 'Autonomous multi-agent PR review. Process all comments until ready for merge.',
   arguments: [
     {
-      name: 'owner',
-      description: 'Repository owner (inferred from git remote if omitted)',
-      required: false
-    },
-    {
-      name: 'repo',
-      description: 'Repository name (inferred from git remote if omitted)',
-      required: false
-    },
-    {
       name: 'pr',
-      description: 'PR number. Omit to process all open PRs with comments.',
+      description: 'PR number, GitHub URL (https://github.com/owner/repo/pull/123), or short format (owner/repo#123). Omit to process all open PRs.',
       required: false
     },
     {
