@@ -1,92 +1,124 @@
-# PR Review MCP
+# pr-review-mcp 🤖
 
-MCP server for PR review processing with native Octokit GitHub integration.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
+![MCP](https://img.shields.io/badge/MCP-2025--11--25-orange.svg)
 
-## Features
+**The ultimate Model Context Protocol (MCP) server for orchestrating AI-driven Pull Request reviews.**
 
-- **Zero Comments Missed** - Cursor pagination fetches all comments
-- **Compact Output** - ~2KB per list call instead of 100K+
-- **Multi-Agent Support** - CodeRabbit, Gemini, Copilot, Sourcery, Qodo, Codex
-- **4-Layer AI Extraction** - High-confidence prompt detection from CodeRabbit comments
-- **Native Thread Resolution** - GraphQL mutation (not REST workaround)
-- **Qodo Tracker** - Checkbox-based resolution for Qodo's persistent comments
-- **Agent Invocation** - Trigger AI reviewers via `pr_invoke`
-- **Circuit Breaker** - Resilient to API failures with auto-retry
-- **Rate Limit Handling** - Built-in throttling via @octokit plugins
+`pr-review-mcp` bridges the gap between GitHub's complex GraphQL API and AI agents. It standardizes PR review data from tools like CodeRabbit, Gemini, Copilot, and Sourcery, enabling intelligent agents to read, resolve, and manage code reviews programmatically.
 
-## Installation
+---
 
-### From npm (when published)
+## 🚀 Why This Exists
+
+Reviewing code is hard; managing AI reviews is harder. Modern CI/CD pipelines often include multiple AI reviewers (CodeRabbit for summaries, Qodo for testing, Gemini for logic), creating a noisy flood of comments. 
+
+This server solves the **"AI-on-AI" coordination problem**:
+1.  **Unified Interface**: One standard API to fetch comments from *any* supported AI agent.
+2.  **Noise Reduction**: Automatically splits multi-issue comments and extracts "nitpicks" from bodies.
+3.  **Resolution Logic**: Allows agents to resolve outdated threads via GraphQL mutations.
+4.  **Parallelism**: Coordinates multiple worker agents to process reviews simultaneously without collision.
+
+---
+
+## ✨ Key Features
+
+- **🔌 GraphQL-Powered Integration**: Efficient cursor-based pagination for large PRs.
+- **🤖 Multi-Agent Orchestration**: Native support for CodeRabbit, Gemini, Copilot, Sourcery, Qodo, and Codex.
+- **🧠 Prompt Extraction**: Automatically parses the underlying prompt used by AI agents from comment metadata.
+- **⚡ Parallel Coordination**: Built-in specialized tools (`claim_work`, `report_progress`) for multi-worker setups.
+- **🛡️ Resilience**: Implements Circuit Breaker patterns and robust retry logic for GitHub API stability.
+- **🧹 Smart Parsing**:
+    - **Nitpick Extraction**: Isolates minor issues from CodeRabbit summaries.
+    - **Multi-issue Splitting**: Breaks down monolithic comments into actionable items.
+    - **Qodo Tracking**: Persistently tracks Qodo comments across commits.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    User[Client / Agent] -->|MCP Protocol| Server[pr-review-mcp]
+    
+    subgraph "Core Logic"
+        Server --> Tools[Tool Handlers]
+        Server --> Extractors[Prompt/Nitpick Extractors]
+        Server --> Coordination[State & Coordination]
+    end
+    
+    subgraph "External"
+        Tools -->|GraphQL / REST| GitHub[GitHub API]
+        Coordination -->|Shared State| Workers[Parallel Agents]
+    end
+    
+    Extractors -.->|Parse| GitHub
+```
+
+---
+
+## 🛠️ Tools
+
+The server exposes **15 optimized tools** for agents.
+
+### 📊 Analysis & Retrieval
+| Tool | Description |
+|------|-------------|
+| `pr_summary` | Get high-level stats (open threads, severity counts). |
+| `pr_list` | List comments with advanced filtering (resolved status, file path). |
+| `pr_list_prs` | List open pull requests with activity stats. |
+| `pr_get` | Get deep details for a specific comment, including the AI prompt. |
+| `pr_changes` | Poll for incremental updates since a specific cursor. |
+| `pr_poll_updates` | Poll for new comments and agent completion status. |
+
+### ⚡ Action & Management
+| Tool | Description |
+|------|-------------|
+| `pr_resolve` | Mark a review thread as resolved. |
+| `pr_invoke` | Trigger a specific AI agent (e.g., CodeRabbit) to re-review. |
+| `pr_labels` | Add, remove, or list PR labels. |
+| `pr_reviewers` | Request or remove human/team reviewers. |
+| `pr_create` | Create a new PR from branches. |
+| `pr_merge` | Merge a PR (squash/merge/rebase) with safety checks. |
+
+### 🧩 Orchestration (Multi-Agent)
+| Tool | Description |
+|------|-------------|
+| `pr_claim_work` | Lock a partition of files for a worker agent. |
+| `pr_report_progress` | Report status (done/failed) for a claimed task. |
+| `pr_get_work_status` | View global orchestration status. |
+
+---
+
+## 💻 Quick Start
+
+### Prerequisites
+- Node.js 18+
+- A GitHub Personal Access Token (PAT) with `repo` scope.
+
+### Installation
 
 ```bash
 npm install -g pr-review-mcp
 ```
 
-### Local Development
+### Configuration
+Set your GitHub token in your environment:
 
 ```bash
-# Clone repository
-git clone https://github.com/thebtf/pr-review-mcp.git
-cd pr-review-mcp
-
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Link globally (optional)
-npm link
+export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
 ```
 
-## Prerequisites
-
-- Node.js 18+
-- GitHub Token (see below)
-- **External MCP Services** (required for `pr-review` skill):
-  - **PR Review MCP** (this server) - provides `pr_*` coordination tools
-  - **Serena MCP** - provides code navigation and editing tools
-
-## Configuration
-
-### GitHub Token Setup
-
-**Recommended: Fine-grained Personal Access Token (PAT)**
-
-Create a fine-grained PAT at https://github.com/settings/tokens?type=beta with minimal permissions:
-
-| Permission | Access | Required For |
-|------------|--------|--------------|
-| Contents | Read | Reading `.github/pr-review.json` config |
-| Pull requests | Read/Write | Reading PR comments, resolving threads |
-| Issues | Read/Write | Qodo tracker (issue comments) |
-
-**Alternative: Classic PAT** with `repo` scope (broader permissions)
-
-> ⚠️ **Security**: Never commit tokens to source control. Use environment variables or secret managers only.
-
-### Environment Variable
-
-```bash
-export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxxxxxx
-```
-
-### Claude Desktop Config
-
-| Platform | Config Path |
-|----------|-------------|
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
-
-For local development:
+### Usage with MCP Client
+Add to your MCP configuration (e.g., `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "pr-review": {
-      "command": "node",
-      "args": ["/path/to/pr-review-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "pr-review-mcp"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       }
@@ -95,195 +127,59 @@ For local development:
 }
 ```
 
-> 💡 Use `${GITHUB_PERSONAL_ACCESS_TOKEN}` to reference an environment variable, or store tokens in a separate `.env` file not committed to git.
+---
 
-After npm publish:
+## 🔍 Examples
 
+### Get PR Summary
 ```json
 {
-  "mcpServers": {
-    "pr-review": {
-      "command": "npx",
-      "args": ["pr-review-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-      }
-    }
+  "owner": "owner-name",
+  "repo": "repo-name",
+  "pr": 123
+}
+```
+
+**Result:**
+```json
+{
+  "total": 45,
+  "unresolved": 3,
+  "bySeverity": {
+    "CRIT": 1,
+    "MAJOR": 2,
+    "MINOR": 40
   }
 }
 ```
 
-## Tools
-
-### `pr_summary`
-
-Get PR review statistics.
-
+### Invoke AI Reviewer
 ```json
 {
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99
+  "owner": "owner-name",
+  "repo": "repo-name",
+  "pr": 123,
+  "agent": "coderabbit"
 }
 ```
 
-Returns: total, resolved, unresolved, counts by severity and file.
-
-### `pr_list`
-
-List comments with filtering.
-
+### Multi-Agent Orchestration
 ```json
 {
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "filter": { "resolved": false },
-  "max": 20
+  "agent_id": "worker-1",
+  "pr_info": { "owner": "org", "repo": "repo", "pr": 42 }
 }
 ```
 
-### `pr_get`
+---
 
-Get detailed comment info including AI prompt.
+## 🔗 Related Projects
 
-```json
-{
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "id": "PRRT_xxx"
-}
-```
+- **[Serena MCP](https://github.com/oraios/serena)** — Code navigation and symbol-level editing for workers
+- **[MCP Specification](https://modelcontextprotocol.io/)** — Model Context Protocol standard
 
-### `pr_resolve`
+---
 
-Mark thread as resolved.
+## 📜 License
 
-```json
-{
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "threadId": "PRRT_xxx"
-}
-```
-
-### `pr_changes`
-
-Incremental fetch since cursor.
-
-```json
-{
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "cursor": "Y3Vyc29yOjE0..."
-}
-```
-
-### `pr_invoke`
-
-Invoke AI code review agents.
-
-```json
-{
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "agent": "all"
-}
-```
-
-Single agent:
-```json
-{
-  "owner": "thebtf",
-  "repo": "novascript",
-  "pr": 99,
-  "agent": "coderabbit",
-  "options": { "focus": "security" }
-}
-```
-
-Supported agents: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`, or `all`
-
-## Required External MCP Services
-
-The `pr-review` and `pr-review-worker` skills depend on external MCP services. These must be configured in your Claude Desktop config.
-
-### PR Review MCP (this server)
-
-**Tools used by orchestrator:**
-- `mcp__pr__pr_summary` - Get PR statistics
-- `mcp__pr__pr_list_prs` - List open PRs
-- `mcp__pr__pr_invoke` - Invoke AI reviewers
-- `mcp__pr__pr_claim_work` - Claim file partition (coordination)
-- `mcp__pr__pr_report_progress` - Report worker progress
-- `mcp__pr__pr_get_work_status` - Check coordination state
-- `mcp__pr__pr_reset_coordination` - Reset coordination state
-
-**Tools used by workers:**
-- `mcp__pr__pr_claim_work` - Claim next partition
-- `mcp__pr__pr_get` - Get comment details with AI prompts
-- `mcp__pr__pr_resolve` - Mark thread as resolved
-- `mcp__pr__pr_report_progress` - Report completion
-
-**Configuration:** See "Claude Desktop Config" section above.
-
-### Serena MCP
-
-**Purpose:** Code navigation and symbol-level editing for workers.
-
-**Tools used by workers:**
-- `mcp__serena__get_symbols_overview` - Get file symbols (replaces Read)
-- `mcp__serena__find_symbol` - Find symbol definitions
-- `mcp__serena__search_for_pattern` - Search codebase (replaces Grep)
-- `mcp__serena__replace_symbol_body` - Edit code (replaces Edit)
-- `mcp__serena__find_referencing_symbols` - Find usages
-
-**Configuration:**
-```json
-{
-  "mcpServers": {
-    "pr-review": { ... },
-    "serena": {
-      "command": "npx",
-      "args": ["@daymxn/serena-mcp"]
-    }
-  }
-}
-```
-
-**Repository:** https://github.com/daymxn/serena
-
-**Behavior on missing tools:** Workers use MCPSearch with one-retry policy. If Serena tools are unavailable after retry, workers will fail with "Unknown tool" errors.
-
-## Workflow Prompt
-
-Use the built-in prompt for automated processing:
-
-```
-/pr-review owner:thebtf repo:novascript pr:99
-```
-
-This automatically:
-1. Gets summary statistics
-2. Lists unresolved comments
-3. Classifies by priority (HIGH/MEDIUM/LOW)
-4. Gets your approval
-5. Implements fixes using AI prompts
-6. Resolves threads
-7. Reports completion status
-
-## Development
-
-```bash
-npm install
-npm run build
-npm run dev  # watch mode
-```
-
-## License
-
-MIT
+MIT © [thebtf](https://github.com/thebtf)
