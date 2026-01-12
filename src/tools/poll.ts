@@ -81,62 +81,106 @@ export interface PollOutput {
 
 /**
  * Check if an author matches an agent's pattern
+ * Normalizes both author and pattern by removing [bot] suffix
  */
 function matchesAuthorPattern(author: string, pattern: string | string[]): boolean {
   const patterns = Array.isArray(pattern) ? pattern : [pattern];
-  const lowerAuthor = author.toLowerCase();
-  return patterns.some(p => lowerAuthor === p.toLowerCase());
+  const normalize = (s: string) =>
+    s.trim().toLowerCase().replace(/\[bot\]$/, '');
+  const normAuthor = normalize(author);
+  return patterns.some(p => normAuthor === normalize(p));
+}
+
+/**
+ * Helper to paginate with early termination when limit is reached
+ */
+async function paginateWithLimit<T>(
+  iterator: AsyncIterable<{ data: T[] }>,
+  limit: number
+): Promise<T[]> {
+  const results: T[] = [];
+  for await (const page of iterator) {
+    results.push(...page.data);
+    if (results.length >= limit) {
+      return results.slice(0, limit);
+    }
+  }
+  return results;
 }
 
 /**
  * Fetch agent completion status by checking for their comments/reviews
+ * Only considers activity after the provided 'since' timestamp
  */
 async function fetchAgentStatus(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  since: string | null
 ): Promise<AgentsStatus> {
   const octokit = getOctokit();
   const configuredAgents = getDefaultAgents();
+  const sinceDate = since ? new Date(since) : null;
 
   // Get issue comments and reviews to check for agent activity
-  // Limit pagination to avoid excessive API calls on active PRs
+  // Use iterator-based pagination with early termination
   const [issueComments, reviews] = await Promise.all([
-    octokit.paginate(octokit.issues.listComments, {
-      owner,
-      repo,
-      issue_number: pr,
-      per_page: 100
-    }, response => response.data.slice(0, 200)), // Limit to first 200 comments
-    octokit.paginate(octokit.pulls.listReviews, {
-      owner,
-      repo,
-      pull_number: pr,
-      per_page: 100
-    }, response => response.data.slice(0, 100)) // Limit to first 100 reviews
+    paginateWithLimit(
+      octokit.paginate.iterator(octokit.issues.listComments, {
+        owner,
+        repo,
+        issue_number: pr,
+        per_page: 100
+      }),
+      200
+    ),
+    paginateWithLimit(
+      octokit.paginate.iterator(octokit.pulls.listReviews, {
+        owner,
+        repo,
+        pull_number: pr,
+        per_page: 100
+      }),
+      100
+    )
   ]);
 
   const agentStatuses: AgentStatus[] = configuredAgents.map(agentId => {
     const config = INVOKABLE_AGENTS[agentId];
+    if (!config) {
+      // Safety guard for runtime consistency
+      return {
+        agentId,
+        name: agentId,
+        ready: false
+      };
+    }
+
     const pattern = config.authorPattern;
 
-    // Check issue comments
+    // Filter comments by author and timestamp
     const agentIssueComments = issueComments.filter(c =>
-      c.user && matchesAuthorPattern(c.user.login, pattern)
+      c.user &&
+      matchesAuthorPattern(c.user.login, pattern) &&
+      (!sinceDate || new Date(c.created_at) > sinceDate)
     );
 
-    // Check reviews
+    // Filter reviews by author and timestamp
     const agentReviews = reviews.filter(r =>
-      r.user && matchesAuthorPattern(r.user.login, pattern)
+      r.user &&
+      matchesAuthorPattern(r.user.login, pattern) &&
+      r.submitted_at !== null &&
+      r.submitted_at !== undefined &&
+      (!sinceDate || new Date(r.submitted_at) > sinceDate)
     );
 
     const hasActivity = agentIssueComments.length > 0 || agentReviews.length > 0;
 
-    // Find latest timestamp
+    // Find latest timestamp from filtered activity
     let lastComment: string | undefined;
     const allDates = [
       ...agentIssueComments.map(c => c.created_at),
-      ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null)
+      ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null && d !== undefined)
     ];
     if (allDates.length > 0) {
       const timestamps = allDates.map(d => new Date(d).getTime());
@@ -282,12 +326,27 @@ export async function prPollUpdates(
 
   const now = new Date().toISOString();
 
-  // Parallel fetch of all update types
-  const [commentsResult, commits, checkStatus, resolvedThreads, agentsStatus] = await Promise.all([
-    includeTypes.includes('comments') || includeTypes.includes('reviews')
-      ? fetchAllThreads(client, owner, repo, pr, { maxItems: 50 })
-      : Promise.resolve({ comments: [], cursor: null, hasMore: false }),
+  // Fetch resolved threads and comments in a single call to avoid duplicate API requests
+  let resolvedThreads: string[] = [];
+  let commentsResult: { comments: import('../github/types.js').ProcessedComment[]; cursor: string | null; hasMore: boolean } = {
+    comments: [],
+    cursor: null,
+    hasMore: false
+  };
 
+  if (includeTypes.includes('comments') || includeTypes.includes('reviews')) {
+    commentsResult = await fetchAllThreads(client, owner, repo, pr, { maxItems: 500 });
+
+    // Extract resolved threads if reviews are included
+    if (includeTypes.includes('reviews')) {
+      resolvedThreads = commentsResult.comments
+        .filter(c => c.resolved)
+        .map(c => c.threadId);
+    }
+  }
+
+  // Parallel fetch of other update types
+  const [commits, checkStatus, agentsStatus] = await Promise.all([
     includeTypes.includes('commits')
       ? fetchCommitsSince(owner, repo, pr, since || null)
       : Promise.resolve([]),
@@ -296,12 +355,8 @@ export async function prPollUpdates(
       ? fetchCheckStatus(owner, repo, pr)
       : Promise.resolve(null),
 
-    includeTypes.includes('reviews')
-      ? fetchResolvedThreadIds(owner, repo, pr, since || null, client)
-      : Promise.resolve([]),
-
     includeTypes.includes('agents')
-      ? fetchAgentStatus(owner, repo, pr)
+      ? fetchAgentStatus(owner, repo, pr, since || null)
       : Promise.resolve(null)
   ]);
 
@@ -313,7 +368,7 @@ export async function prPollUpdates(
     newComments = commentsResult.comments
       .filter(c => {
         if (!sinceDate) return true;
-        const commentDate = c.updatedAt ? new Date(c.updatedAt) : null;
+        const commentDate = c.createdAt ? new Date(c.createdAt) : null;
         return commentDate && commentDate > sinceDate;
       })
       .map(c => ({
@@ -329,10 +384,14 @@ export async function prPollUpdates(
       }));
   }
 
+  // Determine if there are updates including agent activity
+  const hasAgentUpdates = agentsStatus?.agents?.some(a => a.ready) ?? false;
+
   const hasUpdates =
     newComments.length > 0 ||
     commits.length > 0 ||
-    resolvedThreads.length > 0;
+    resolvedThreads.length > 0 ||
+    hasAgentUpdates;
 
   return {
     hasUpdates,

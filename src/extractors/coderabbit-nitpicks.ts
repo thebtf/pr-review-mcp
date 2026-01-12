@@ -210,7 +210,14 @@ export function parseOutsideDiffComments(reviewId: string, body: string): Outsid
 
   // 1. Find the "Outside diff range comments" section
   // Structure: <details><summary>⚠️ Outside diff range comments (N)</summary><blockquote>...
-  // Use GREEDY ([\s\S]*) to capture up to the LAST </blockquote></details>
+  // Regex breakdown:
+  //   <details[^>]*>           - Opening details tag with any attributes
+  //   \s*<summary[^>]*>        - Opening summary tag (with whitespace)
+  //   [^<]*Outside diff range comments[^<]* - Summary text containing target phrase
+  //   <\/summary>              - Closing summary tag
+  //   \s*<blockquote[^>]*>     - Opening blockquote tag (with whitespace)
+  //   ([\s\S]*)                - GREEDY capture group: all content including newlines
+  //   <\/blockquote>\s*<\/details> - Closing tags (matches LAST occurrence due to greedy *)
   const outerSectionMatch = normalizedBody.match(/<details[^>]*>\s*<summary[^>]*>[^<]*Outside diff range comments[^<]*<\/summary>\s*<blockquote[^>]*>([\s\S]*)<\/blockquote>\s*<\/details>/i);
 
   if (!outerSectionMatch) {
