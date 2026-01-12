@@ -175,6 +175,14 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 
 ## Workflow Steps
 
+### Step 0: MULTI-PR MODE (if no specific PR provided)
+\`\`\`
+pr_list_prs { owner, repo, state: "OPEN" }
+\`\`\`
+- Sort PRs by number ascending (oldest first)
+- For EACH PR: execute Steps 1-9 completely before moving to next
+- Log: "Processing PR {N} of {TOTAL}: #{PR_NUMBER}"
+
 ### Step 1: ESCAPE CHECK
 \`\`\`
 pr_labels { owner, repo, pr, action: "get" }
@@ -209,13 +217,18 @@ pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
+**DYNAMIC WORKER COUNT:**
+\`\`\`
+worker_count = min(max_workers, max(1, ceil(unresolved / 10)))
+Examples: 1-10 comments → 1 worker, 11-20 → 2, 21-30 → 3, 41+ → max_workers (5)
+\`\`\`
+
 **CRITICAL: Send ALL Task calls in ONE message for parallelism.**
 
 \`\`\`typescript
-// SINGLE message with MULTIPLE Task calls:
+// SINGLE message with N Task calls (N = calculated worker_count):
 Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-1..." })
-Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-2..." })
-Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-3..." })
+// ... repeat for each worker up to N
 \`\`\`
 
 **Worker prompt template:**
@@ -371,17 +384,11 @@ function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string;
     }
   }
 
-  // Safe parse of PR number
-  let prNumber: number | undefined;
-  if (args.pr) {
-    const parsed = parseInt(args.pr, 10);
-    prNumber = isNaN(parsed) ? undefined : parsed;
-  }
-
+  // Input is neither URL nor number - return without PR
   return {
     owner: args.owner,
     repo: args.repo,
-    pr: prNumber
+    pr: undefined
   };
 }
 

@@ -12,10 +12,12 @@ allowed-tools:
   - Task
   - Bash
   - mcp__pr__pr_summary
+  - mcp__pr__pr_list_prs
   - mcp__pr__pr_get_work_status
   - mcp__pr__pr_labels
   - mcp__pr__pr_invoke
   - mcp__pr__pr_poll_updates
+  - mcp__pr__pr_reset_coordination
 # FORBIDDEN for orchestrator (workers only):
 # - Read, Edit, Write, Grep, Glob
 # - mcp__pr__pr_list
@@ -104,11 +106,13 @@ INIT -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 |-------|---------|----------------|
 | `owner` | - | Infer from `git remote -v` or PR URL in context |
 | `repo` | - | Infer from `git remote -v` or PR URL in context |
-| `pr` | - | Infer from branch name, PR URL, or recent context |
-| `desired_workers` | `3` | Use 3 unless user specifies |
+| `pr` | - (optional) | If not specified, process ALL open PRs sequentially |
+| `max_workers` | `5` | Maximum parallel workers (actual count is dynamic) |
 | `agents` | `["coderabbit", "gemini", "codex", "copilot"]` | All supported agents |
 
-**If owner/repo/pr cannot be inferred:** Extract from git remote once, then proceed.
+**Multi-PR Mode:** When `pr` is not specified, orchestrator fetches all open PRs via `pr_list_prs` and processes each one sequentially (by ascending PR number).
+
+**If owner/repo cannot be inferred:** Extract from git remote once, then proceed.
 
 ---
 
@@ -120,16 +124,26 @@ Execute ALL steps automatically. Do NOT stop between steps.
 When spawning workers (Step 6), you MUST send multiple Task tool calls in a SINGLE message.
 This is how Claude Code achieves parallelism. Sequential calls = no parallelism.
 
-### Step 0: RESOLVE PARAMETERS
+### Step 0: RESOLVE PARAMETERS & MULTI-PR LOOP
+
 ```bash
 git remote get-url origin
 # Extract: github.com/OWNER/REPO.git -> owner=OWNER, repo=REPO
 ```
-If PR number unknown, check recent PRs from git branch tracking or CI environment variables (GITHUB_PR, CI_PULL_REQUEST).
 
-**Note:** If absolutely no PR context exists, this step permits ONE initial prompt for PR number only (exception to non-interactive mode).
+**If PR number specified:** Process that single PR (Steps 1-9).
 
-**-> IMMEDIATELY proceed to Step 1**
+**If PR number NOT specified (Multi-PR Mode):**
+```
+pr_list_prs { owner, repo, state: "OPEN" }
+```
+- Sort PRs by number ascending (oldest first)
+- For EACH PR in the list:
+  - Execute Steps 1-9 completely
+  - Only proceed to next PR after current one reaches completion/error
+  - Log progress: "Processing PR #{N} of {TOTAL}: #{PR_NUMBER}"
+
+**-> IMMEDIATELY proceed to Step 1 (for first/only PR)**
 
 ### Step 1: ESCAPE CHECK
 
@@ -191,7 +205,21 @@ Check convergence (max 20 iterations to prevent infinite loops):
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
-**ACTION REQUIRED: Call Task tool 3 times IN PARALLEL (single response, multiple tool calls).**
+**DYNAMIC WORKER COUNT:**
+Calculate worker count based on unresolved comments from `pr_summary`:
+```
+unresolved = summary.unresolved
+worker_count = min(max_workers, max(1, ceil(unresolved / 10)))
+
+Examples:
+- 1-10 comments  → 1 worker
+- 11-20 comments → 2 workers
+- 21-30 comments → 3 workers
+- 31-40 comments → 4 workers
+- 41+ comments   → max_workers (default 5)
+```
+
+**ACTION REQUIRED: Call Task tool N times IN PARALLEL (single response, multiple tool calls).**
 
 You MUST spawn workers using the Task tool with these EXACT parameters:
 
@@ -229,9 +257,9 @@ Do NOT ask questions. Work autonomously until no_work.
 If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.
 ```
 
-**CRITICAL: Send ALL 3 Task calls in ONE message to run in parallel.**
+**CRITICAL: Send ALL Task calls in ONE message to run in parallel.**
 
-Example (conceptual):
+Example (for 3 workers):
 ```
 [Call 1] Task(subagent_type="general-purpose", run_in_background=true, model="sonnet", prompt="...worker-1...")
 [Call 2] Task(subagent_type="general-purpose", run_in_background=true, model="sonnet", prompt="...worker-2...")
@@ -239,6 +267,14 @@ Example (conceptual):
 ```
 
 If you send them sequentially (one at a time), parallelism is BROKEN.
+
+**WORKER COMPLETION GUARANTEE:**
+Workers MUST process ALL their claimed partitions before exiting. A worker should:
+1. Claim partition via `pr_claim_work`
+2. Process ALL comments in partition
+3. Report progress via `pr_report_progress`
+4. Loop back to step 1 until `no_work` response
+5. Only then exit (after running build if code was modified)
 
 **-> IMMEDIATELY proceed to Step 7**
 

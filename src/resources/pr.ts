@@ -41,10 +41,17 @@ interface PRResourceResponse {
 
 /**
  * List all available PR resources
- * Returns empty array as resources are dynamically accessed via URI
+ * Returns URI template for dynamic PR resources
  */
 export async function listPRResources(): Promise<Resource[]> {
-  return [];
+  return [
+    {
+      uri: 'pr://{owner}/{repo}/{pr}',
+      name: 'Pull Request Resource',
+      description: 'Dynamic PR resource with summary and metadata. Use pr://{owner}/{repo}/{pr} format.',
+      mimeType: 'application/json'
+    }
+  ];
 }
 
 /**

@@ -245,8 +245,12 @@ pr_report_progress {
 
 **Detection logic:**
 ```bash
-# Check root directory for marker files, use first match
-ls package.json *.csproj *.sln Cargo.toml go.mod pyproject.toml setup.py Makefile 2>/dev/null
+# Check root directory for marker files
+for f in package.json Cargo.toml go.mod pyproject.toml setup.py Makefile; do
+  [ -f "$f" ] && echo "$f" && break
+done
+# Check for .NET projects
+find . -maxdepth 1 -name "*.csproj" -o -name "*.sln" 2>/dev/null | head -1
 ```
 
 **If build fails:**

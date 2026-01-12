@@ -489,7 +489,7 @@ export class PRReviewMCPServer {
             annotations: {
               title: 'Claim Work Partition',
               readOnlyHint: false,
-              destructiveHint: false,
+              destructiveHint: true, // force=true can destroy existing run state
               idempotentHint: false,
               openWorldHint: false
             }
