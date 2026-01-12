@@ -292,7 +292,9 @@ class CoordinationStateManager {
 
   private getPrKey(prInfo?: { owner: string; repo: string; pr: number }): string {
     const info = prInfo || this.currentRun?.prInfo;
-    if (!info) return 'unknown';
+    if (!info) {
+      return 'unknown';
+    }
     return `${info.owner}-${info.repo}-${info.pr}`;
   }
 
@@ -304,6 +306,11 @@ class CoordinationStateManager {
   private async ensureNitpicksLoaded(prInfo?: { owner: string; repo: string; pr: number }): Promise<void> {
     const prKey = this.getPrKey(prInfo);
     if (this.nitpicksLoaded && this.currentPrKey === prKey) return;
+
+    // Persist current PR's nitpicks before switching
+    if (this.nitpicksLoaded && this.currentPrKey && this.currentPrKey !== prKey) {
+      await this.persistNitpicksAsync();
+    }
 
     const filePath = this.getNitpicksPath(prInfo);
     if (existsSync(filePath)) {

@@ -50,8 +50,8 @@ interface ParsedPRUrl {
  * - owner/repo#123
  */
 function parseGitHubPRUrl(input: string): ParsedPRUrl | null {
-  // Full URL pattern
-  const urlPattern = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
+  // Full URL pattern - supports URLs with trailing slashes or paths
+  const urlPattern = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/i;
   const urlMatch = input.match(urlPattern);
   if (urlMatch) {
     return {
@@ -468,9 +468,11 @@ async function buildContext(
       client
     );
 
+    const { owner, repo } = normalized as { owner: string; repo: string };
+
     const targets: PRTarget[] = prs.pullRequests.map(p => ({
-      owner: normalized.owner!,
-      repo: normalized.repo!,
+      owner,
+      repo,
       pr: p.number,
       title: p.title,
       unresolved: p.stats.reviewThreads

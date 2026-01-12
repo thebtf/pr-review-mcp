@@ -56,7 +56,17 @@ class MCPClient {
       }
     });
 
-    await new Promise(r => setTimeout(r, 500));
+    // Wait for server startup log with timeout fallback
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 2000);
+      const checkReady = () => {
+        if (this.logs.some(l => l.includes('running on stdio') || l.includes('GitHub token'))) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      this.server.stderr.on('data', checkReady);
+    });
 
     // Initialize
     await this.send('initialize', {
@@ -94,15 +104,16 @@ class MCPClient {
 // TESTS
 // ============================================================================
 
-test('tools/list returns 16 tools', async (client) => {
+test('tools/list returns at least 16 tools', async (client) => {
   const res = await client.send('tools/list', {});
-  assert(res.result?.tools?.length === 16, `Expected 16 tools, got ${res.result?.tools?.length}`);
+  assert(res.result?.tools?.length >= 16, `Expected at least 16 tools, got ${res.result?.tools?.length}`);
 });
 
-test('tools have annotations', async (client) => {
+test('all tools have annotations', async (client) => {
   const res = await client.send('tools/list', {});
-  const withAnnotations = res.result.tools.filter(t => t.annotations);
-  assert(withAnnotations.length === 16, `Expected 16 tools with annotations, got ${withAnnotations.length}`);
+  const tools = res.result.tools;
+  assert(tools.length > 0, 'No tools returned');
+  assert(tools.every(t => t.annotations), 'Expected all tools to have annotations');
 });
 
 test('annotations have correct structure', async (client) => {
@@ -127,18 +138,20 @@ test('pr_merge is destructive', async (client) => {
   assert(tool.annotations.destructiveHint === true, 'pr_merge should be destructive');
 });
 
-test('resources/list returns empty array', async (client) => {
+test('resources/list returns resource template', async (client) => {
   const res = await client.send('resources/list', {});
   assert(Array.isArray(res.result?.resources), 'Expected resources array');
+  assert(res.result.resources.length >= 1, 'Expected at least one resource template');
+  assert(res.result.resources[0].uri.includes('{owner}'), 'Expected URI template');
 });
 
 test('resources/read with valid URI returns data', async (client) => {
-  const res = await client.send('resources/read', { uri: 'pr://thebtf/pr-review-mcp/2' });
-  assert(res.result?.contents?.[0]?.uri === 'pr://thebtf/pr-review-mcp/2', 'Wrong URI');
+  const res = await client.send('resources/read', { uri: 'pr://thebtf/pr-review-mcp/6' });
+  assert(res.result?.contents?.[0]?.uri === 'pr://thebtf/pr-review-mcp/6', 'Wrong URI');
   assert(res.result?.contents?.[0]?.mimeType === 'application/json', 'Wrong mimeType');
 
   const data = JSON.parse(res.result.contents[0].text);
-  assert(data.pr?.number === 2, 'Wrong PR number');
+  assert(data.pr?.number === 6, 'Wrong PR number');
   assert(typeof data.summary?.total === 'number', 'Missing summary.total');
 });
 

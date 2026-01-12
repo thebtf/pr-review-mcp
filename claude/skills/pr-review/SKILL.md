@@ -106,11 +106,11 @@ INIT -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 |-------|---------|----------------|
 | `owner` | - | Infer from `git remote -v` or PR URL in context |
 | `repo` | - | Infer from `git remote -v` or PR URL in context |
-| `pr` | - (optional) | If not specified, process ALL open PRs sequentially |
+| `pr` | - (optional) | If not specified, process ALL open PRs sequentially (max 20) |
 | `max_workers` | `5` | Maximum parallel workers (actual count is dynamic) |
 | `agents` | `["coderabbit", "gemini", "codex", "copilot"]` | All supported agents |
 
-**Multi-PR Mode:** When `pr` is not specified, orchestrator fetches all open PRs via `pr_list_prs` and processes each one sequentially (by ascending PR number).
+**Multi-PR Mode:** When `pr` is not specified, orchestrator fetches up to 20 open PRs via `pr_list_prs` and processes each one sequentially (by ascending PR number). If no PRs found, report and exit gracefully.
 
 **If owner/repo cannot be inferred:** Extract from git remote once, then proceed.
 

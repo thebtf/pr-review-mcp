@@ -79,11 +79,14 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
       }
 
       case 'add': {
+        if (!labels || labels.length === 0) {
+          throw new StructuredError('parse', 'Labels required for add action', false);
+        }
         const { data } = await octokit.issues.addLabels({
           owner,
           repo,
           issue_number: pr,
-          labels: labels!
+          labels
         });
         currentLabels = data.map(l => l.name);
         return {
@@ -95,8 +98,11 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
       }
 
       case 'remove': {
+        if (!labels || labels.length === 0) {
+          throw new StructuredError('parse', 'Labels required for remove action', false);
+        }
         const removed: string[] = [];
-        for (const label of labels!) {
+        for (const label of labels) {
           try {
             await octokit.issues.removeLabel({
               owner,
@@ -131,11 +137,14 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
       }
 
       case 'set': {
+        if (!labels || labels.length === 0) {
+          throw new StructuredError('parse', 'Labels required for set action', false);
+        }
         const { data } = await octokit.issues.setLabels({
           owner,
           repo,
           issue_number: pr,
-          labels: labels!
+          labels
         });
         currentLabels = data.map(l => l.name);
         return {

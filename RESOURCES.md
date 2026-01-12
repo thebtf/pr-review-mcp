@@ -23,7 +23,7 @@ pr://{owner}/{repo}/{pr}
 
 ### `resources/list`
 
-Lists available resources. Currently returns an empty array as resources are accessed dynamically via URI.
+Lists available resources. Returns a resource template that describes the URI format for accessing PR resources.
 
 **Request:**
 ```json
@@ -40,7 +40,14 @@ Lists available resources. Currently returns an empty array as resources are acc
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "resources": []
+    "resources": [
+      {
+        "uri": "pr://{owner}/{repo}/{pr}",
+        "name": "Pull Request Resource",
+        "description": "Dynamic PR resource with summary and metadata. Use pr://{owner}/{repo}/{pr} format.",
+        "mimeType": "application/json"
+      }
+    ]
   }
 }
 ```
@@ -145,7 +152,7 @@ If the PR doesn't exist or is inaccessible:
   "jsonrpc": "2.0",
   "id": 2,
   "error": {
-    "code": -32004,
+    "code": -32603,
     "message": "Resource not found"
   }
 }
@@ -160,7 +167,7 @@ If the GitHub token is missing or invalid:
   "jsonrpc": "2.0",
   "id": 2,
   "error": {
-    "code": -32001,
+    "code": -32603,
     "message": "Authentication failed"
   }
 }

@@ -68,7 +68,7 @@ export async function readPRResource(uri: string, client: GitHubClient): Promise
     );
   }
 
-  const [, owner, repo, prStr] = match;
+  const [, owner, repo, prStr] = match as [string, string, string, string];
   const pr = parseInt(prStr, 10);
 
   try {
@@ -123,13 +123,11 @@ export async function readPRResource(uri: string, client: GitHubClient): Promise
     if (error instanceof StructuredError) {
       // Use JSON-RPC 2.0 compliant error codes:
       // - -32602: Invalid params (parse errors)
-      // - -32001: Authentication error (application-level)
-      // - -32004: Not found (application-level)
-      // - -32603: Internal error (rate limit, network, circuit)
+      // - -32603: Internal error (auth, permission, not_found, rate limit, network, circuit)
       const errorCodeMap: Record<string, number> = {
-        'auth': -32001,           // Application-level auth error
-        'permission': -32001,     // Application-level permission error
-        'not_found': -32004,      // Application-level not found
+        'auth': ErrorCode.InternalError as number,
+        'permission': ErrorCode.InternalError as number,
+        'not_found': ErrorCode.InternalError as number,
         'parse': ErrorCode.InvalidParams as number,
         'rate_limit': ErrorCode.InternalError as number,
         'network': ErrorCode.InternalError as number,

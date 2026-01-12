@@ -39,10 +39,16 @@ export class MCPLogger {
     }
 
     try {
+      let dataStr: string;
+      try {
+        dataStr = data !== undefined ? JSON.stringify(data) : '';
+      } catch {
+        dataStr = '[Unserializable data]';
+      }
       this.server.sendLoggingMessage({
         level,
         logger: this.loggerName,
-        data: data !== undefined ? `${message}: ${JSON.stringify(data)}` : message
+        data: dataStr ? `${message}: ${dataStr}` : message
       });
     } catch (error) {
       // Fallback to stderr if MCP logging fails
