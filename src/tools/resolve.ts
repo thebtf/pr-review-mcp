@@ -34,7 +34,7 @@ export async function prResolveWithContext(
   }
 
   if (threadId.startsWith('coderabbit-nitpick-')) {
-    await stateManager.markNitpickResolved(threadId, 'agent');
+    await stateManager.markNitpickResolved(threadId, 'agent', { owner, repo, pr });
     return { success: true, synthetic: true, message: 'Nitpick marked as resolved internally' };
   }
 

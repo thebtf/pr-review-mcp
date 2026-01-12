@@ -193,21 +193,29 @@ class CoordinationStateManager {
     };
   }
 
-  async markNitpickResolved(nitpickId: string, agentId: string): Promise<void> {
-    await this.ensureNitpicksLoaded();
+  async markNitpickResolved(
+    nitpickId: string,
+    agentId: string,
+    prInfo?: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    await this.ensureNitpicksLoaded(prInfo);
     this.resolvedNitpicks.set(nitpickId, {
       resolvedAt: new Date().toISOString(),
       resolvedBy: agentId
     });
-    await this.persistNitpicksAsync();
+    await this.persistNitpicksAsync(prInfo);
   }
 
-  async isNitpickResolved(nitpickId: string): Promise<boolean> {
-    await this.ensureNitpicksLoaded();
+  async isNitpickResolved(
+    nitpickId: string,
+    prInfo?: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.has(nitpickId);
   }
 
-  getResolvedNitpicksCount(): number {
+  async getResolvedNitpicksCount(prInfo?: { owner: string; repo: string; pr: number }): Promise<number> {
+    await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.size;
   }
 
@@ -282,22 +290,22 @@ class CoordinationStateManager {
       }
   }
 
-  private getPrKey(): string {
-    if (!this.currentRun) return 'unknown';
-    const { owner, repo, pr } = this.currentRun.prInfo;
-    return `${owner}-${repo}-${pr}`;
+  private getPrKey(prInfo?: { owner: string; repo: string; pr: number }): string {
+    const info = prInfo || this.currentRun?.prInfo;
+    if (!info) return 'unknown';
+    return `${info.owner}-${info.repo}-${info.pr}`;
   }
 
-  private getNitpicksPath(): string {
-    const prKey = this.getPrKey();
+  private getNitpicksPath(prInfo?: { owner: string; repo: string; pr: number }): string {
+    const prKey = this.getPrKey(prInfo);
     return path.join(process.cwd(), '.agent', 'status', `nitpicks-${prKey}.json`);
   }
 
-  private async ensureNitpicksLoaded(): Promise<void> {
-    const prKey = this.getPrKey();
+  private async ensureNitpicksLoaded(prInfo?: { owner: string; repo: string; pr: number }): Promise<void> {
+    const prKey = this.getPrKey(prInfo);
     if (this.nitpicksLoaded && this.currentPrKey === prKey) return;
 
-    const filePath = this.getNitpicksPath();
+    const filePath = this.getNitpicksPath(prInfo);
     if (existsSync(filePath)) {
       try {
         const data = await readFile(filePath, 'utf-8');
@@ -313,8 +321,8 @@ class CoordinationStateManager {
     this.currentPrKey = prKey;
   }
 
-  private async persistNitpicksAsync(): Promise<void> {
-    const filePath = this.getNitpicksPath();
+  private async persistNitpicksAsync(prInfo?: { owner: string; repo: string; pr: number }): Promise<void> {
+    const filePath = this.getNitpicksPath(prInfo);
     const dir = path.dirname(filePath);
 
     if (!existsSync(dir)) {
