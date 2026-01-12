@@ -139,7 +139,7 @@ async function refreshPartitions(
   // Group by file and create partitions
   const newPartitions = createPartitionsFromComments(comments);
 
-  // Add to existing run (only adds files not already present)
+  // Add new comments/partitions to the existing run
   return stateManager.addPartitions(newPartitions);
 }
 
@@ -222,10 +222,10 @@ export async function prClaimWork(
     const run = stateManager.getCurrentRun();
     if (run) {
       const { owner, repo, pr } = run.prInfo;
-      const newPartitions = await refreshPartitions(client, owner, repo, pr);
+      const touchedPartitionsCount = await refreshPartitions(client, owner, repo, pr);
 
-      if (newPartitions > 0) {
-        logger.warning(`[coordination] Refreshed partitions - added ${newPartitions} new files`);
+      if (touchedPartitionsCount > 0) {
+        logger.warning(`[coordination] Refreshed partitions - added/updated ${touchedPartitionsCount} partitions`);
         // Try to claim again after refresh
         partition = stateManager.claimPartition(agent_id);
       }

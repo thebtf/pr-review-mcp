@@ -100,19 +100,20 @@ async function fetchAgentStatus(
   const configuredAgents = getDefaultAgents();
 
   // Get issue comments and reviews to check for agent activity
+  // Limit pagination to avoid excessive API calls on active PRs
   const [issueComments, reviews] = await Promise.all([
     octokit.paginate(octokit.issues.listComments, {
       owner,
       repo,
       issue_number: pr,
       per_page: 100
-    }),
+    }, response => response.data.slice(0, 200)), // Limit to first 200 comments
     octokit.paginate(octokit.pulls.listReviews, {
       owner,
       repo,
       pull_number: pr,
       per_page: 100
-    })
+    }, response => response.data.slice(0, 100)) // Limit to first 100 reviews
   ]);
 
   const agentStatuses: AgentStatus[] = configuredAgents.map(agentId => {

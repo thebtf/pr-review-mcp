@@ -130,7 +130,7 @@ If the URI doesn't match the expected format, an error is returned:
   "jsonrpc": "2.0",
   "id": 2,
   "error": {
-    "code": -32600,
+    "code": -32602,
     "message": "Invalid PR resource URI format. Expected: pr://{owner}/{repo}/{pr}"
   }
 }
@@ -145,7 +145,7 @@ If the PR doesn't exist or is inaccessible:
   "jsonrpc": "2.0",
   "id": 2,
   "error": {
-    "code": -32600,
+    "code": -32004,
     "message": "Resource not found"
   }
 }
@@ -160,7 +160,7 @@ If the GitHub token is missing or invalid:
   "jsonrpc": "2.0",
   "id": 2,
   "error": {
-    "code": -32600,
+    "code": -32001,
     "message": "Authentication failed"
   }
 }
@@ -177,7 +177,7 @@ If the GitHub token is missing or invalid:
 
 The resource implementation reuses existing tools:
 - `prSummary` - Fetches review comment statistics
-- `prListPRs` - Fetches PR metadata (title, state, author, etc.)
+- `QUERIES.getPullRequest` - Direct GraphQL query to fetch PR metadata (title, state, author, etc.)
 
 ### Data Flow
 

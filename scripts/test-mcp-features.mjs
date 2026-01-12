@@ -50,7 +50,10 @@ class MCPClient {
             this.pendingRequests.delete(response.id);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        // Non-JSON lines (e.g., logs) are expected, only log if debugging
+        if (process.env.DEBUG) console.error('Parse error:', line);
+      }
     });
 
     await new Promise(r => setTimeout(r, 500));

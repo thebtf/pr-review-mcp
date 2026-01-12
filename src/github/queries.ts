@@ -128,5 +128,28 @@ export const QUERIES = {
         }
       }
     }
+  `,
+
+  /**
+   * Get a single pull request by number
+   */
+  getPullRequest: `
+    query($owner: String!, $repo: String!, $pr: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          number
+          title
+          state
+          isDraft
+          createdAt
+          updatedAt
+          author { login }
+          baseRefName
+          headRefName
+          mergeable
+          reviewDecision
+        }
+      }
+    }
   `
 } as const;

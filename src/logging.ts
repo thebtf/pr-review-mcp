@@ -46,7 +46,10 @@ export class MCPLogger {
       });
     } catch (error) {
       // Fallback to stderr if MCP logging fails
-      console.error(`[${level.toUpperCase()}] ${message}`, data !== undefined ? data : '');
+      console.error(`[MCP LOG FAIL] [${level.toUpperCase()}] ${message}`, data !== undefined ? data : '');
+      if (error instanceof Error) {
+        console.error(`[MCP LOG FAIL] Reason: ${error.message}`);
+      }
     }
   }
 

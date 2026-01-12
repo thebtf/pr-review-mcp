@@ -144,6 +144,11 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
           labels: currentLabels
         };
       }
+
+      default: {
+        const _exhaustiveCheck: never = action;
+        throw new Error(`Unknown action: ${_exhaustiveCheck}`);
+      }
     }
   } catch (e) {
     if (e && typeof e === 'object' && 'status' in e) {

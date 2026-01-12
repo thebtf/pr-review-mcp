@@ -2,6 +2,46 @@ import { createHash } from 'crypto';
 import type { ProcessedComment } from '../github/types.js';
 import { extractPrompt, truncateBody } from './prompt.js';
 
+// ============================================================================
+// Russian Positive Patterns (for filtering non-actionable compliments)
+// ============================================================================
+
+/**
+ * Prefixes indicating positive/complimentary comments (not actionable)
+ */
+const RUSSIAN_POSITIVE_PREFIXES = /^(отличн|хорош|корректн|чист|надёжн|правильн)/i;
+
+/**
+ * Pattern for positive adjective + noun combinations
+ * e.g., "Хорошая документация", "Отличное покрытие"
+ */
+const RUSSIAN_POSITIVE_ADJ_NOUN = /\b(отличн|хорош|корректн|чист|надёжн)\w*\s+(дополнени|документаци|реализаци|интеграци|дизайн|покрыти|тест|логик|управлени|инициализаци|захват|защит|поддержк|освобождени|расширени|улучшени|помет)/i;
+
+/**
+ * Suffixes indicating correctness confirmation
+ */
+const RUSSIAN_CORRECT_SUFFIXES = ['корректны.', 'корректно.', 'корректен.'];
+
+/**
+ * Pattern for "X is correct" format
+ * e.g., "Импорты корректны", "Реализация корректна"
+ */
+const RUSSIAN_SUBJECT_CORRECT = /^(импорты|тесты|реализация|метод|конструктор|helper|порядок)\s+(reactiveui\s+)?корректн/i;
+
+/**
+ * Check if title matches Russian positive patterns (compliments, not actionable)
+ */
+function isRussianPositiveComment(title: string): boolean {
+  return RUSSIAN_POSITIVE_PREFIXES.test(title) ||
+         RUSSIAN_POSITIVE_ADJ_NOUN.test(title) ||
+         RUSSIAN_CORRECT_SUFFIXES.some(suffix => title.endsWith(suffix)) ||
+         RUSSIAN_SUBJECT_CORRECT.test(title);
+}
+
+// ============================================================================
+// Types
+// ============================================================================
+
 export interface NitpickComment {
   id: string;
   threadId: string;      // same as id
@@ -238,14 +278,7 @@ export function parseOutsideDiffComments(reviewId: string, body: string): Outsid
       }
 
       // Russian positive patterns (compliments, not actionable)
-      const russianPositive = /^(отличн|хорош|корректн|чист|надёжн|правильн)/i.test(title) ||
-                              /\b(отличн|хорош|корректн|чист|надёжн)\w*\s+(дополнени|документаци|реализаци|интеграци|дизайн|покрыти|тест|логик|управлени|инициализаци|захват|защит|поддержк|освобождени|расширени|улучшени|помет)/i.test(title) ||
-                              title.endsWith('корректны.') ||
-                              title.endsWith('корректно.') ||
-                              title.endsWith('корректен.') ||
-                              /^(импорты|тесты|реализация|метод|конструктор|helper|порядок)\s+(reactiveui\s+)?корректн/i.test(title);
-
-      if (russianPositive) {
+      if (isRussianPositiveComment(title)) {
         continue;
       }
 

@@ -327,7 +327,7 @@ export class PRReviewMCPServer {
             annotations: {
               title: 'Invoke AI Code Review Agents',
               readOnlyHint: false,
-              destructiveHint: true,
+              destructiveHint: false,
               idempotentHint: false,
               openWorldHint: true
             }

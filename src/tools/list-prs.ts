@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod';
-import { GitHubClient } from '../github/client.js';
+import { GitHubClient, StructuredError } from '../github/client.js';
 import { QUERIES } from '../github/queries.js';
 
 export const ListPRsInputSchema = z.object({
@@ -100,7 +100,11 @@ export async function prListPRs(
   );
 
   if (!response.repository) {
-    throw new Error(`Repository ${owner}/${repo} not found`);
+    throw new StructuredError(
+      'not_found',
+      `Repository ${owner}/${repo} not found`,
+      false
+    );
   }
 
   const prData = response.repository.pullRequests;

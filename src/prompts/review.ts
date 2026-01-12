@@ -16,6 +16,7 @@ import { prSummary } from '../tools/summary.js';
 import { prListPRs } from '../tools/list-prs.js';
 import { prGetWorkStatus } from '../tools/coordination.js';
 import { getEnvConfig, type InvokableAgentId, type ReviewMode } from '../agents/registry.js';
+import { logger } from '../logging.js';
 
 // ============================================================================
 // Types
@@ -437,8 +438,14 @@ async function buildContext(
         desiredWorkers,
         envConfig
       };
-    } catch {
-      // If pre-fetch fails, return minimal context
+    } catch (error) {
+      // If pre-fetch fails, log warning and return minimal context
+      logger.warning('Failed to pre-fetch context for PR', {
+        owner: normalized.owner,
+        repo: normalized.repo,
+        pr: normalized.pr,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return {
         targets: [{ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }],
         desiredWorkers,
@@ -470,7 +477,12 @@ async function buildContext(
       desiredWorkers,
       envConfig
     };
-  } catch {
+  } catch (error) {
+    logger.warning('Failed to fetch open PRs for repository', {
+      owner: normalized.owner,
+      repo: normalized.repo,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return { targets: [], desiredWorkers, envConfig };
   }
 }

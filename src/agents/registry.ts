@@ -142,6 +142,10 @@ export function getReviewMode(): ReviewMode {
     return 'parallel';
   }
 
+  if (envValue && envValue !== 'sequential') {
+    logger.warning(`[registry] Invalid PR_REVIEW_MODE: "${envValue}", using default: sequential`);
+  }
+
   return DEFAULT_MODE;
 }
 
