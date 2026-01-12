@@ -209,6 +209,7 @@ Continue with original fix - do NOT block on tech debt.
 
 **Always verify fix compiles before resolving.**
 
+
 #### 2d. RESOLVE THREAD
 ```
 pr_resolve { owner, repo, pr, threadId: "THREAD_ID" }

@@ -62,6 +62,7 @@ Code navigation and symbol-level editing for workers:
 
 For full tool list and configuration details, see main `README.md` → "Required External MCP Services"
 
+
 ## Quick Start
 
 ```

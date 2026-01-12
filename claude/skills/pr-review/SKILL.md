@@ -147,6 +147,9 @@ pr_list_prs { owner, repo, state: "OPEN" }
 
 ### Step 1: ESCAPE CHECK
 
+**-> IMMEDIATELY proceed to Step 2**
+
+### Step 2: PREFLIGHT CHECK
 ```
 pr_labels { owner, repo, pr, action: "get" }
 ```
@@ -154,9 +157,6 @@ pr_labels { owner, repo, pr, action: "get" }
 - If `pause-ai-review` label present -> **STOP**, report "Paused by user"
 - If PR closed/merged -> **STOP**, report "PR closed externally"
 
-**-> IMMEDIATELY proceed to Step 2**
-
-### Step 2: PREFLIGHT CHECK
 ```
 pr_get_work_status {}
 ```
