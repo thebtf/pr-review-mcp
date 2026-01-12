@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
+import { logger } from '../logging.js';
 import type {
   CoordinationState,
   FilePartition,
@@ -45,7 +46,7 @@ class CoordinationStateManager {
   ): string {
     if (this.currentRun) {
       const status = this.currentRun.completedAt ? 'completed' : 'active';
-      console.warn(
+      logger.warning(
         `[coordination] Replacing ${status} run ${this.currentRun.runId} for ` +
         `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr} ` +
         `with new run for ${prInfo.owner}/${prInfo.repo}#${prInfo.pr}`
@@ -414,7 +415,7 @@ class CoordinationStateManager {
 
     // Reopen run if it was completed and we added/updated work
     if (touched > 0 && this.currentRun.completedAt) {
-      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added/updated ${touched} partitions`);
+      logger.warning(`[coordination] Reopening completed run ${this.currentRun.runId} - added/updated ${touched} partitions`);
       this.currentRun.completedAt = undefined;
     }
 

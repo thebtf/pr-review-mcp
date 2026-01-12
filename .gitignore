@@ -21,3 +21,4 @@ nul
 
 # Agent session data (nitpicks tracking, tech debt)
 .agent/status/
+tmpclaude-*

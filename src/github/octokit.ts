@@ -9,6 +9,7 @@ import { graphql } from '@octokit/graphql';
 import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import type { GraphQlQueryResponseData } from '@octokit/graphql';
+import { logger } from '../logging.js';
 
 // ============================================================================
 // Octokit with Plugins
@@ -58,7 +59,7 @@ export function getOctokit(): Octokit {
       auth: token,
       throttle: {
         onRateLimit: (retryAfter: number, options: { method: string; url: string }, _octokit, retryCount: number) => {
-          console.warn(
+          logger.warning(
             `[octokit] Rate limit hit for ${options.method} ${options.url}, ` +
             `retrying after ${retryAfter}s (attempt ${retryCount + 1})`
           );
@@ -66,7 +67,7 @@ export function getOctokit(): Octokit {
           return retryCount < 3;
         },
         onSecondaryRateLimit: (retryAfter: number, options: { method: string; url: string }, _octokit, retryCount: number) => {
-          console.warn(
+          logger.warning(
             `[octokit] Secondary rate limit hit for ${options.method} ${options.url}, ` +
             `retrying after ${retryAfter}s (attempt ${retryCount + 1})`
           );

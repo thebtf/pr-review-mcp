@@ -6,6 +6,8 @@
  * - PR_REVIEW_MODE: 'sequential' | 'parallel' (default: 'sequential')
  */
 
+import { logger } from '../logging.js';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -120,7 +122,7 @@ export function getDefaultAgents(): InvokableAgentId[] {
 
   const invalidAgents = rawAgents.filter(id => !isInvokableAgent(id));
   if (invalidAgents.length > 0) {
-    console.warn(`[registry] Invalid agent IDs in PR_REVIEW_AGENTS: ${invalidAgents.join(', ')}`);
+    logger.warning(`[registry] Invalid agent IDs in PR_REVIEW_AGENTS: ${invalidAgents.join(', ')}`);
   }
 
   const agents = rawAgents.filter((id): id is InvokableAgentId => isInvokableAgent(id));

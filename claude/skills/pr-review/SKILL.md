@@ -214,7 +214,7 @@ Parameters:
 - spawned_by_orchestrator: true
 
 CRITICAL FIRST STEP (MCP tool bootstrap):
-1) Call MCPSearch to load MCP tools for "pr-review" and "serena" servers:
+1) Call MCPSearch to load MCP tools for "pr" and "serena" servers:
    - MCPSearch query: "select:mcp__pr__pr_claim_work"
    - MCPSearch query: "select:mcp__pr__pr_get"
    - MCPSearch query: "select:mcp__pr__pr_resolve"

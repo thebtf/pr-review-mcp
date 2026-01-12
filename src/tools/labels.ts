@@ -38,6 +38,19 @@ export interface LabelsOutput {
 }
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Helper to extract label names from GitHub API response
+ */
+function extractLabelNames(labels: Array<string | { name?: string }>): string[] {
+  return labels
+    .map(l => (typeof l === 'string' ? l : l.name || ''))
+    .filter(Boolean);
+}
+
+// ============================================================================
 // Main Function
 // ============================================================================
 
@@ -57,9 +70,7 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
           repo,
           issue_number: pr
         });
-        currentLabels = issue.labels.map(l =>
-          typeof l === 'string' ? l : l.name || ''
-        ).filter(Boolean);
+        currentLabels = extractLabelNames(issue.labels);
         return {
           success: true,
           action: 'get',
@@ -109,9 +120,7 @@ export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
           repo,
           issue_number: pr
         });
-        currentLabels = issue.labels.map(l =>
-          typeof l === 'string' ? l : l.name || ''
-        ).filter(Boolean);
+        currentLabels = extractLabelNames(issue.labels);
 
         return {
           success: true,

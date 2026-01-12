@@ -360,10 +360,11 @@ function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string;
 
     // Check if it's just a number
     if (isPRNumber(args.pr)) {
+      const prNum = parseInt(args.pr, 10);
       return {
         owner: args.owner,
         repo: args.repo,
-        pr: parseInt(args.pr, 10),
+        pr: isNaN(prNum) ? undefined : prNum,
         prNumberOnly: !args.owner || !args.repo
       };
     }

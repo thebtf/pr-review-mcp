@@ -112,8 +112,8 @@ Adding Qodo Focus tracking (similar to CodeRabbit nitpicks) for synthetic IDs `q
 | Prefix | Source | Tracking |
 |--------|--------|----------|
 | `coderabbit-nitpick-*` | CodeRabbit inline nitpicks | Hybrid (memory + file) |
-| `qodo-focus-*` | Qodo Focus areas | Hybrid (memory + file) |
-| `qodo-security-*` | Qodo Security concerns | Hybrid (memory + file) |
+| `qodo-focus-*` | Qodo Focus areas | GitHub comment tracker |
+| `qodo-security-*` | Qodo Security concerns | GitHub comment tracker |
 
 ---
 

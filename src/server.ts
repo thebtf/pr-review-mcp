@@ -14,13 +14,17 @@ import {
   ListToolsRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   McpError,
   Tool,
   Prompt,
+  Resource,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { z, ZodError } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
+import { logger } from './logging.js';
 import { prSummary, SummaryInputSchema } from './tools/summary.js';
 import { prList, ListInputSchema } from './tools/list.js';
 import { prGet, GetInputSchema } from './tools/get.js';
@@ -49,6 +53,7 @@ import {
   REVIEW_PROMPT_DEFINITION,
   type ReviewPromptArgs
 } from './prompts/review.js';
+import { listPRResources, readPRResource } from './resources/pr.js';
 
 // ============================================================================
 // MCP Server
@@ -68,19 +73,23 @@ export class PRReviewMCPServer {
         capabilities: {
           tools: {},
           prompts: {},
+          logging: {},
+          resources: {},
         },
       }
     );
 
     this.githubClient = new GitHubClient();
+    logger.initialize(this.server);
     this.setupToolHandlers();
     this.setupPromptHandlers();
+    this.setupResourceHandlers();
     this.setupErrorHandling();
   }
 
   private setupErrorHandling(): void {
     this.server.onerror = (error) => {
-      console.error('[MCP Error]', error);
+      logger.error('MCP protocol error', error);
     };
 
     process.on('SIGINT', async () => {
@@ -134,6 +143,20 @@ export class PRReviewMCPServer {
     });
   }
 
+  private setupResourceHandlers(): void {
+    // List resources
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      const resources = await listPRResources();
+      return { resources };
+    });
+
+    // Read resource
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      return await readPRResource(uri, this.githubClient);
+    });
+  }
+
   private setupToolHandlers(): void {
     // List tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -150,6 +173,13 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' }
               },
               required: ['owner', 'repo', 'pr']
+            },
+            annotations: {
+              title: 'Get PR Review Statistics',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -164,6 +194,13 @@ export class PRReviewMCPServer {
                 limit: { type: 'number', description: 'Max PRs to return (default: 20, max: 100)' }
               },
               required: ['owner', 'repo']
+            },
+            annotations: {
+              title: 'List Pull Requests',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -185,6 +222,13 @@ export class PRReviewMCPServer {
                 max: { type: 'number', description: 'Max comments to return (default: 20)' }
               },
               required: ['owner', 'repo', 'pr']
+            },
+            annotations: {
+              title: 'List PR Review Comments',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -199,6 +243,13 @@ export class PRReviewMCPServer {
                 id: { type: 'string', description: 'Comment or thread ID' }
               },
               required: ['owner', 'repo', 'pr', 'id']
+            },
+            annotations: {
+              title: 'Get Detailed Comment Information',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -213,6 +264,13 @@ export class PRReviewMCPServer {
                 threadId: { type: 'string', description: 'Thread ID to resolve' }
               },
               required: ['owner', 'repo', 'pr', 'threadId']
+            },
+            annotations: {
+              title: 'Resolve Review Thread',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -228,6 +286,13 @@ export class PRReviewMCPServer {
                 max: { type: 'number', description: 'Max comments to return (default: 50)' }
               },
               required: ['owner', 'repo', 'pr']
+            },
+            annotations: {
+              title: 'Get Incremental Comment Updates',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -258,6 +323,13 @@ export class PRReviewMCPServer {
                 }
               },
               required: ['owner', 'repo', 'pr', 'agent']
+            },
+            annotations: {
+              title: 'Invoke AI Code Review Agents',
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: true
             }
           },
           {
@@ -277,6 +349,13 @@ export class PRReviewMCPServer {
                 }
               },
               required: ['owner', 'repo', 'pr']
+            },
+            annotations: {
+              title: 'Poll for Review Updates',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -296,6 +375,13 @@ export class PRReviewMCPServer {
                 }
               },
               required: ['owner', 'repo', 'pr', 'action']
+            },
+            annotations: {
+              title: 'Manage PR Labels',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -320,6 +406,13 @@ export class PRReviewMCPServer {
                 }
               },
               required: ['owner', 'repo', 'pr', 'action']
+            },
+            annotations: {
+              title: 'Manage PR Reviewers',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true
             }
           },
           {
@@ -337,6 +430,13 @@ export class PRReviewMCPServer {
                 draft: { type: 'boolean', description: 'Create as draft PR' }
               },
               required: ['owner', 'repo', 'title', 'head']
+            },
+            annotations: {
+              title: 'Create Pull Request',
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: true
             }
           },
           {
@@ -355,6 +455,13 @@ export class PRReviewMCPServer {
                 confirm: { type: 'boolean', const: true, description: 'REQUIRED: Must be true to confirm merge (safety guard)' }
               },
               required: ['owner', 'repo', 'pr', 'confirm']
+            },
+            annotations: {
+              title: 'Merge Pull Request',
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: true
             }
           },
           {
@@ -378,6 +485,13 @@ export class PRReviewMCPServer {
                 force: { type: 'boolean', description: 'Force replace active run (use with caution)' }
               },
               required: ['agent_id']
+            },
+            annotations: {
+              title: 'Claim Work Partition',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false
             }
           },
           {
@@ -399,6 +513,13 @@ export class PRReviewMCPServer {
                 }
               },
               required: ['agent_id', 'file', 'status']
+            },
+            annotations: {
+              title: 'Report Work Progress',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false
             }
           },
           {
@@ -409,6 +530,13 @@ export class PRReviewMCPServer {
               properties: {
                 run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
               }
+            },
+            annotations: {
+              title: 'Get Work Status',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false
             }
           },
           {
@@ -420,6 +548,13 @@ export class PRReviewMCPServer {
                 confirm: { type: 'boolean', const: true, description: 'Must be true to confirm reset (safety guard)' }
               },
               required: ['confirm']
+            },
+            annotations: {
+              title: 'Reset Coordination State',
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: true,
+              openWorldHint: false
             }
           }
         ] as Tool[]

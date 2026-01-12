@@ -158,6 +158,8 @@ pr_get { owner, repo, pr, id: threadId }
 
 #### 2b. CONFIDENCE CHECK (One-Hop Investigation)
 
+**One-Hop Investigation:** Examine the immediate context around the issue - one level of function calls, one file boundary, or one logical scope - without deep traversal of the entire codebase.
+
 **Classify comment for trigger keywords:**
 
 | Category | Keywords | Action |
@@ -187,9 +189,25 @@ pr_get { owner, repo, pr, id: threadId }
 Continue with original fix - do NOT block on tech debt.
 
 #### 2c. APPLY FIX
-- Execute `aiPrompt` if present
-- Otherwise follow comment body and repo conventions
-- Verify fix compiles
+
+**If aiPrompt is present:**
+- Execute it as primary instruction source
+
+**If aiPrompt is missing:**
+1. Find repo conventions:
+   - Check `CONTRIBUTING.md`, `README.md`, `.editorconfig` in root
+   - Use `mcp__serena__search_for_pattern` for similar patterns in codebase
+   - Follow existing code style in the same file
+2. Handle ambiguous comments:
+   - Make the minimal safe change that addresses the core concern
+   - Prefer defensive changes (add null checks, improve validation)
+   - Document assumptions in code comments
+3. Fallback behavior:
+   - If comment is unclear: implement the safest interpretation
+   - If multiple solutions possible: choose the least invasive
+   - If truly blocked: skip thread, add to errors array in report
+
+**Always verify fix compiles before resolving.**
 
 #### 2d. RESOLVE THREAD
 ```
@@ -288,7 +306,7 @@ X Exiting with broken build
 ## Example Session
 
 ```
-0. MCPSearch "select:mcp__pr-review__pr_claim_work" -> tool loaded
+0. MCPSearch "select:mcp__pr__pr_claim_work" -> tool loaded
    MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
    ... (load all required tools)
 1. pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }

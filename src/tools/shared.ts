@@ -62,7 +62,7 @@ async function fetchCodeRabbitNitpicks(
     ];
   } catch (error) {
     // Silently fail - nitpicks are a bonus, not critical
-    console.error('Failed to fetch CodeRabbit nitpicks:', error);
+    // Note: Not using MCP logger here to avoid dependency in shared utility
     return [];
   }
 }
