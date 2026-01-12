@@ -7,6 +7,7 @@ import { getOctokit } from '../github/octokit.js';
 import {
   InvokableAgentId,
   getInvokableAgentIds,
+  getDefaultAgents,
   isInvokableAgent
 } from '../agents/registry.js';
 import {
@@ -99,7 +100,7 @@ async function getConfiguredAgents(
     const content = await getFileContent(owner, repo, '.github/pr-review.json');
 
     if (!content) {
-      return { agents: getInvokableAgentIds() };
+      return { agents: getDefaultAgents() };
     }
 
     const config: RepoConfig = JSON.parse(content);
@@ -111,12 +112,12 @@ async function getConfiguredAgents(
     );
 
     return {
-      agents: validAgents.length > 0 ? validAgents : getInvokableAgentIds(),
+      agents: validAgents.length > 0 ? validAgents : getDefaultAgents(),
       defaults: config.invoke?.defaults
     };
   } catch {
     // Config file doesn't exist or is invalid - use all agents
-    return { agents: getInvokableAgentIds() };
+    return { agents: getDefaultAgents() };
   }
 }
 

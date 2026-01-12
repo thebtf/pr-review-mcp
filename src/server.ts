@@ -32,75 +32,23 @@ import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
+import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
 import {
   prClaimWork,
   prReportProgress,
   prGetWorkStatus,
+  prResetCoordination,
   ClaimWorkSchema,
   ReportProgressSchema,
-  GetWorkStatusSchema
+  GetWorkStatusSchema,
+  ResetCoordinationSchema
 } from './tools/coordination.js';
 import { getInvokableAgentIds } from './agents/registry.js';
-
-// ============================================================================
-// Workflow Prompt
-// ============================================================================
-
-const PR_REVIEW_PROMPT = `I'll process PR review comments systematically until all are resolved.
-
-## Phase 1: Discovery
-
-1. Call \`pr_summary\` to get statistics
-2. Note total, resolved, unresolved counts
-3. Create todo list if unresolved > 0
-
-## Phase 2: Classification
-
-1. Call \`pr_list\` with \`filter: { resolved: false }\`
-2. Classify by priority:
-   - **HIGH** (must fix): CRIT, MAJOR, security issues
-   - **MEDIUM** (should fix): MINOR, type safety, error handling
-   - **LOW** (nice to have): NITPICK, style, docs
-
-## Phase 3: User Approval
-
-Present categorized list to user:
-- Show priorities with brief descriptions
-- Ask user to confirm which issues to address
-- Allow user to skip or reprioritize items
-
-## Phase 4: Implementation
-
-For each approved item (HIGH → MEDIUM → LOW):
-1. Call \`pr_get\` to fetch full details + AI prompt
-2. **Execute AI prompt literally** if available
-3. Read target file and apply fix
-4. Verify fix compiles/passes lint
-5. Call \`pr_resolve\` to mark thread resolved
-6. Update todo list (mark completed)
-
-## Phase 5: Completion
-
-1. Re-check \`pr_summary\` - verify 0 unresolved
-2. If new comments appeared, return to Phase 2
-3. Report final status: "Ready for merge approval"
-4. Summarize all fixes applied
-
-## Rules
-
-| Rule | Description |
-|------|-------------|
-| **NO DEFERRING** | Every comment gets fixed. No "complex = later" |
-| **USE AI PROMPT** | Execute AI prompts from comments literally |
-| **VERIFY FIXES** | Ensure each fix compiles before resolving |
-| **ITERATE** | New review rounds may add more comments |
-
-## Error Handling
-
-If a tool fails:
-- Retry with backoff for network errors
-- Skip and note for permission errors
-- Report blockers requiring manual intervention`;
+import {
+  generateReviewPrompt,
+  REVIEW_PROMPT_DEFINITION,
+  type ReviewPromptArgs
+} from './prompts/review.js';
 
 // ============================================================================
 // MCP Server
@@ -113,7 +61,7 @@ export class PRReviewMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'pr-review-mcp',
+        name: 'pr',
         version: '1.0.0',
       },
       {
@@ -147,25 +95,9 @@ export class PRReviewMCPServer {
       return {
         prompts: [
           {
-            name: 'pr-review',
-            description: 'Automated PR review processing - systematically address all review comments',
-            arguments: [
-              {
-                name: 'owner',
-                description: 'Repository owner (username or organization)',
-                required: true
-              },
-              {
-                name: 'repo',
-                description: 'Repository name',
-                required: true
-              },
-              {
-                name: 'pr',
-                description: 'Pull request number (as string)',
-                required: true
-              }
-            ]
+            name: REVIEW_PROMPT_DEFINITION.name,
+            description: REVIEW_PROMPT_DEFINITION.description,
+            arguments: REVIEW_PROMPT_DEFINITION.arguments
           }
         ] as Prompt[]
       };
@@ -175,15 +107,15 @@ export class PRReviewMCPServer {
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      if (name === 'pr-review') {
-        const owner = args?.owner || '';
-        const repo = args?.repo || '';
-        const pr = args?.pr || '';
+      if (name === 'review') {
+        const promptArgs: ReviewPromptArgs = {
+          owner: args?.owner as string | undefined,
+          repo: args?.repo as string | undefined,
+          pr: args?.pr as string | undefined,
+          workers: args?.workers as string | undefined
+        };
 
-        const promptText = PR_REVIEW_PROMPT +
-          (owner && repo && pr
-            ? `\n\n---\n\nStarting review for **${owner}/${repo}#${pr}**. Let me get the summary first.`
-            : '\n\n---\n\nPlease provide owner, repo, and pr number to begin.');
+        const promptText = await generateReviewPrompt(promptArgs, this.githubClient);
 
         return {
           messages: [
@@ -218,6 +150,20 @@ export class PRReviewMCPServer {
                 pr: { type: 'number', description: 'Pull request number' }
               },
               required: ['owner', 'repo', 'pr']
+            }
+          },
+          {
+            name: 'pr_list_prs',
+            description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                owner: { type: 'string', description: 'Repository owner' },
+                repo: { type: 'string', description: 'Repository name' },
+                state: { type: 'string', enum: ['OPEN', 'CLOSED', 'MERGED', 'all'], description: 'PR state filter (default: OPEN)' },
+                limit: { type: 'number', description: 'Max PRs to return (default: 20, max: 100)' }
+              },
+              required: ['owner', 'repo']
             }
           },
           {
@@ -335,21 +281,21 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_labels',
-            description: 'Add, remove, or set labels on a PR',
+            description: 'Get, add, remove, or set labels on a PR',
             inputSchema: {
               type: 'object',
               properties: {
                 owner: { type: 'string', description: 'Repository owner' },
                 repo: { type: 'string', description: 'Repository name' },
                 pr: { type: 'number', description: 'Pull request number' },
-                action: { type: 'string', enum: ['add', 'remove', 'set'], description: 'Label action' },
+                action: { type: 'string', enum: ['get', 'add', 'remove', 'set'], description: 'Label action (get returns current labels)' },
                 labels: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: 'Label names'
+                  description: 'Label names (required for add/remove/set, ignored for get)'
                 }
               },
-              required: ['owner', 'repo', 'pr', 'action', 'labels']
+              required: ['owner', 'repo', 'pr', 'action']
             }
           },
           {
@@ -428,7 +374,8 @@ export class PRReviewMCPServer {
                   },
                   required: ['owner', 'repo', 'pr'],
                   description: 'PR info (required if no active run)'
-                }
+                },
+                force: { type: 'boolean', description: 'Force replace active run (use with caution)' }
               },
               required: ['agent_id']
             }
@@ -462,6 +409,17 @@ export class PRReviewMCPServer {
               properties: {
                 run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
               }
+            }
+          },
+          {
+            name: 'pr_reset_coordination',
+            description: 'Reset/clear the current coordination run (use with caution)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                confirm: { type: 'boolean', const: true, description: 'Must be true to confirm reset (safety guard)' }
+              },
+              required: ['confirm']
             }
           }
         ] as Tool[]
@@ -497,9 +455,9 @@ export class PRReviewMCPServer {
     };
 
     // Tool handler map for better maintainability and scalability
-
     const toolHandlers: Record<string, ToolHandler> = {
       'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
+      'pr_list_prs': createToolHandler(ListPRsInputSchema, prListPRs),
       'pr_list': createToolHandler(ListInputSchema, prList),
       'pr_get': createToolHandler(GetInputSchema, prGet),
       'pr_resolve': createToolHandler(ResolveInputSchema, prResolveWithContext),
@@ -512,7 +470,8 @@ export class PRReviewMCPServer {
       'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
       'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
       'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
-      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus)
+      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus),
+      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination)
     };
 
     // Handle tool calls
@@ -539,7 +498,6 @@ export class PRReviewMCPServer {
         }
 
         if (error instanceof StructuredError) {
-          // Map StructuredError kinds to appropriate MCP error codes
           const errorCodeMap: Record<string, ErrorCode> = {
             'auth': ErrorCode.InvalidRequest,
             'permission': ErrorCode.InvalidRequest,
