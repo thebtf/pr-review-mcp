@@ -33,9 +33,10 @@ export async function prResolveWithContext(
     return resolveQodoIssue(owner, repo, pr, threadId);
   }
 
-  if (threadId.startsWith('coderabbit-nitpick-')) {
+  // Handle synthetic CodeRabbit comments (nitpicks and outside-diff)
+  if (threadId.startsWith('coderabbit-nitpick-') || threadId.startsWith('coderabbit-outside-diff-')) {
     await stateManager.markNitpickResolved(threadId, 'agent', { owner, repo, pr });
-    return { success: true, synthetic: true, message: 'Nitpick marked as resolved internally' };
+    return { success: true, synthetic: true, message: 'Synthetic comment marked as resolved internally' };
   }
 
   // Find the thread first

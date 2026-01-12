@@ -36,7 +36,11 @@ export async function prSummary(
   ]);
 
   const { comments, totalCount } = threadsResult;
-  const unresolvedNitpicks = comments.filter(c => c.threadId.startsWith('coderabbit-nitpick-'));
+  // Count synthetic CodeRabbit comments (nitpicks + outside-diff)
+  const unresolvedNitpicks = comments.filter(c =>
+    c.threadId.startsWith('coderabbit-nitpick-') ||
+    c.threadId.startsWith('coderabbit-outside-diff-')
+  );
   const totalNitpicksCount = unresolvedNitpicks.length + resolvedNitpicksCount;
 
   // Get Qodo comments with resolved status from tracker
