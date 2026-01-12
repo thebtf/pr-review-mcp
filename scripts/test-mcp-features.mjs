@@ -32,14 +32,30 @@ class MCPClient {
       cwd: process.cwd()
     });
 
+    this.server.on('error', (err) => {
+      for (const { reject } of this.pendingRequests.values()) {
+        reject(new Error(`Server error: ${err.message}`));
+      }
+      this.pendingRequests.clear();
+    });
+
+    this.server.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        for (const { reject } of this.pendingRequests.values()) {
+          reject(new Error(`Server exited with code ${code}`));
+        }
+        this.pendingRequests.clear();
+      }
+    });
+
     // Capture stderr (logs)
     this.server.stderr.on('data', (data) => {
       this.logs.push(data.toString());
     });
 
     // Handle responses
-    const rl = readline.createInterface({ input: this.server.stdout });
-    rl.on('line', (line) => {
+    this.rl = readline.createInterface({ input: this.server.stdout });
+    this.rl.on('line', (line) => {
       if (!line.trim()) return;
       try {
         const response = JSON.parse(line);
@@ -70,7 +86,7 @@ class MCPClient {
 
     // Initialize
     await this.send('initialize', {
-      protocolVersion: '2024-11-05',
+      protocolVersion: '2025-11-25',
       capabilities: {},
       clientInfo: { name: 'test-client', version: '1.0.0' }
     });
@@ -96,6 +112,7 @@ class MCPClient {
   }
 
   close() {
+    this.rl?.close();
     this.server?.kill();
   }
 }
@@ -190,20 +207,22 @@ async function run() {
   console.log('🧪 MCP Feature Tests\n');
 
   const client = new MCPClient();
-  await client.start();
+  try {
+    await client.start();
 
-  for (const { name, fn } of TESTS) {
-    try {
-      await fn(client);
-      console.log(`✅ ${name}`);
-      passed++;
-    } catch (e) {
-      console.log(`❌ ${name}: ${e.message}`);
-      failed++;
+    for (const { name, fn } of TESTS) {
+      try {
+        await fn(client);
+        console.log(`✅ ${name}`);
+        passed++;
+      } catch (e) {
+        console.log(`❌ ${name}: ${e.message}`);
+        failed++;
+      }
     }
+  } finally {
+    client.close();
   }
-
-  client.close();
 
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   console.log(`Passed: ${passed}/${TESTS.length}`);

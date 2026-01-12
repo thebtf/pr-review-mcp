@@ -14,6 +14,7 @@ import type {
 } from '../github/types.js';
 import { extractPrompt, extractTitle, truncateBody } from '../extractors/prompt.js';
 import { extractSeverity } from '../extractors/severity.js';
+import { logger } from '../logging.js';
 import {
   parseNitpicksFromReviewBody,
   nitpickToProcessedComment,
@@ -62,7 +63,7 @@ async function fetchCodeRabbitNitpicks(
     ];
   } catch (error) {
     // Silently fail - nitpicks are a bonus, not critical
-    // Note: Not using MCP logger here to avoid dependency in shared utility
+    logger.warning('Failed to fetch CodeRabbit nitpicks', { error: error instanceof Error ? error.message : String(error) });
     return [];
   }
 }

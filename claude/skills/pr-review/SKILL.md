@@ -252,6 +252,8 @@ CRITICAL FIRST STEP (MCP tool bootstrap):
    - MCPSearch query: "select:mcp__serena__replace_symbol_body"
 2) If any tool missing, report error via pr_report_progress and exit.
 
+⚠️ **MCP Dependencies:** For configuration details, see main README.md → "Required External MCP Services"
+
 Then start processing. Claim partitions, fix comments, resolve threads.
 Do NOT ask questions. Work autonomously until no_work.
 If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.

@@ -309,7 +309,15 @@ class CoordinationStateManager {
 
     // Persist current PR's nitpicks before switching
     if (this.nitpicksLoaded && this.currentPrKey && this.currentPrKey !== prKey) {
-      await this.persistNitpicksAsync();
+      // Parse old prKey to get prInfo for persistence
+      const parts = this.currentPrKey.split('-');
+      const prStr = parts.pop();
+      const repo = parts.pop();
+      const owner = parts.join('-'); // Handle owners with dashes
+      const oldPrInfo = owner && repo && prStr
+        ? { owner, repo, pr: parseInt(prStr, 10) }
+        : undefined;
+      await this.persistNitpicksAsync(oldPrInfo);
     }
 
     const filePath = this.getNitpicksPath(prInfo);

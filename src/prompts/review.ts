@@ -62,7 +62,7 @@ function parseGitHubPRUrl(input: string): ParsedPRUrl | null {
   }
 
   // Short format: owner/repo#123
-  const shortPattern = /^([^/]+)\/([^#]+)#(\d+)$/;
+  const shortPattern = /^([^/]+)\/([^/#]+)#(\d+)$/;
   const shortMatch = input.match(shortPattern);
   if (shortMatch) {
     return {
@@ -399,7 +399,7 @@ async function buildContext(
   args: ReviewPromptArgs,
   client: GitHubClient
 ): Promise<PromptContext> {
-  const desiredWorkers = parseInt(args.workers || '3', 10);
+  const desiredWorkers = Math.max(1, parseInt(args.workers || '3', 10) || 3);
   const envConfig = getEnvConfig();
 
   // Normalize args (parse URL if provided)
@@ -447,6 +447,9 @@ async function buildContext(
       };
     } catch (error) {
       // If pre-fetch fails, log warning and return minimal context
+      if (process.env.DEBUG) {
+        console.error('[generateReviewPrompt] Pre-fetch failed:', error);
+      }
       logger.warning('Failed to pre-fetch context for PR', {
         owner: normalized.owner,
         repo: normalized.repo,

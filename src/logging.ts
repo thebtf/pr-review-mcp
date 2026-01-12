@@ -32,27 +32,29 @@ export class MCPLogger {
    * Log a message at the specified level
    */
   log(level: LogLevel, message: string, data?: unknown): void {
+    let dataStr: string;
+    try {
+      dataStr = (data !== undefined && data !== null) ? JSON.stringify(data) : '';
+    } catch {
+      dataStr = '[Unserializable data]';
+    }
+    const logMessage = dataStr ? `${message}: ${dataStr}` : message;
+
     if (!this.server) {
       // Fallback to stderr if server not initialized (startup errors)
-      console.error(`[${level.toUpperCase()}] ${message}`, data !== undefined ? data : '');
+      console.error(`[${level.toUpperCase()}] ${logMessage}`);
       return;
     }
 
     try {
-      let dataStr: string;
-      try {
-        dataStr = data !== undefined ? JSON.stringify(data) : '';
-      } catch {
-        dataStr = '[Unserializable data]';
-      }
       this.server.sendLoggingMessage({
         level,
         logger: this.loggerName,
-        data: dataStr ? `${message}: ${dataStr}` : message
+        data: logMessage
       });
     } catch (error) {
       // Fallback to stderr if MCP logging fails
-      console.error(`[MCP LOG FAIL] [${level.toUpperCase()}] ${message}`, data !== undefined ? data : '');
+      console.error(`[MCP LOG FAIL] [${level.toUpperCase()}] ${logMessage}`);
       if (error instanceof Error) {
         console.error(`[MCP LOG FAIL] Reason: ${error.message}`);
       }

@@ -85,7 +85,7 @@ export interface PollOutput {
 function matchesAuthorPattern(author: string, pattern: string | string[]): boolean {
   const patterns = Array.isArray(pattern) ? pattern : [pattern];
   const lowerAuthor = author.toLowerCase();
-  return patterns.some(p => lowerAuthor.includes(p.toLowerCase()));
+  return patterns.some(p => lowerAuthor === p.toLowerCase());
 }
 
 /**
@@ -139,7 +139,8 @@ async function fetchAgentStatus(
       ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null)
     ];
     if (allDates.length > 0) {
-      lastComment = allDates.sort().reverse()[0];
+      const timestamps = allDates.map(d => new Date(d).getTime());
+      lastComment = new Date(Math.max(...timestamps)).toISOString();
     }
 
     return {
