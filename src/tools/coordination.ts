@@ -1,5 +1,6 @@
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient, StructuredError } from '../github/client.js';
+import { logger } from '../logging.js';
 import { stateManager } from '../coordination/state.js';
 import {
   ClaimWorkSchema,
@@ -16,6 +17,16 @@ import { fetchAllThreads } from './shared.js';
 import { SEVERITY_ORDER, type Severity } from '../extractors/severity.js';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Threshold for auto-force replacement of old runs (5 minutes)
+ * Workers typically complete quickly, so runs older than this are likely stale
+ */
+const OLD_RUN_THRESHOLD_MS = 5 * 60 * 1000;
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -29,6 +40,54 @@ function maxSeverity(s1: Severity, s2: Severity): Severity {
   const idx1 = i1 === -1 ? SEVERITY_ORDER.length : i1;
   const idx2 = i2 === -1 ? SEVERITY_ORDER.length : i2;
   return idx1 < idx2 ? s1 : s2;
+}
+
+/**
+ * Group comments by file and create partitions
+ * Shared logic used by initializeRun and refreshPartitions
+ */
+function createPartitionsFromComments(
+  comments: Array<{ file?: string; threadId: string; severity: string }>
+): FilePartition[] {
+  // Group by file
+  const fileGroups = new Map<string, { threadIds: Set<string>, severity: Severity }>();
+
+  for (const comment of comments) {
+    if (!comment.file) continue;
+
+    const existingGroup = fileGroups.get(comment.file);
+    const group = existingGroup ?? {
+      threadIds: new Set<string>(),
+      severity: comment.severity as Severity
+    };
+
+    group.threadIds.add(comment.threadId);
+
+    if (existingGroup) {
+      group.severity = maxSeverity(group.severity, comment.severity as Severity);
+    }
+
+    fileGroups.set(comment.file, group);
+  }
+
+  // Create partitions
+  const partitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
+    file,
+    comments: Array.from(data.threadIds),
+    severity: data.severity,
+    status: 'pending' as const
+  }));
+
+  // Sort by severity (highest first)
+  partitions.sort((a, b) => {
+    const i1 = SEVERITY_ORDER.indexOf(a.severity);
+    const i2 = SEVERITY_ORDER.indexOf(b.severity);
+    const idx1 = i1 === -1 ? SEVERITY_ORDER.length : i1;
+    const idx2 = i2 === -1 ? SEVERITY_ORDER.length : i2;
+    return idx1 - idx2;
+  });
+
+  return partitions;
 }
 
 /**
@@ -53,49 +112,10 @@ async function initializeRun(
   const headSha = prResponse.data.head.sha;
   const { comments } = threadsResponse;
 
-  // 3. Group by file
-  const fileGroups = new Map<string, { threadIds: Set<string>, severity: Severity }>();
+  // 2. Group by file and create partitions
+  const partitions = createPartitionsFromComments(comments);
 
-  for (const comment of comments) {
-    if (!comment.file) continue;
-
-    const existingGroup = fileGroups.get(comment.file);
-    const group = existingGroup ?? {
-      threadIds: new Set<string>(),
-      // Initialize with the first comment's severity for this file
-      severity: comment.severity as Severity
-    };
-
-    // Track unique thread IDs (O(1) with Set vs O(N) with Array.includes)
-    group.threadIds.add(comment.threadId);
-
-    // Update max severity for the file (only if we had an existing group)
-    if (existingGroup) {
-      group.severity = maxSeverity(group.severity, comment.severity as Severity);
-    }
-
-    fileGroups.set(comment.file, group);
-  }
-
-  // 4. Create partitions
-  const partitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
-    file,
-    comments: Array.from(data.threadIds),
-    severity: data.severity,
-    status: 'pending'
-  }));
-
-  // Sort partitions by severity (highest first)
-  // Unknown severities are placed at the end (lowest priority)
-  partitions.sort((a, b) => {
-    const i1 = SEVERITY_ORDER.indexOf(a.severity);
-    const i2 = SEVERITY_ORDER.indexOf(b.severity);
-    const idx1 = i1 === -1 ? SEVERITY_ORDER.length : i1;
-    const idx2 = i2 === -1 ? SEVERITY_ORDER.length : i2;
-    return idx1 - idx2;
-  });
-
-  // 5. Init run
+  // 3. Init run
   return stateManager.initRun({ owner, repo, pr }, headSha, partitions);
 }
 
@@ -116,36 +136,10 @@ async function refreshPartitions(
     maxItems: 500
   });
 
-  // Group by file
-  const fileGroups = new Map<string, { threadIds: Set<string>, severity: Severity }>();
+  // Group by file and create partitions
+  const newPartitions = createPartitionsFromComments(comments);
 
-  for (const comment of comments) {
-    if (!comment.file) continue;
-
-    const existingGroup = fileGroups.get(comment.file);
-    const group = existingGroup ?? {
-      threadIds: new Set<string>(),
-      severity: comment.severity as Severity
-    };
-
-    group.threadIds.add(comment.threadId);
-
-    if (existingGroup) {
-      group.severity = maxSeverity(group.severity, comment.severity as Severity);
-    }
-
-    fileGroups.set(comment.file, group);
-  }
-
-  // Create partitions for new files
-  const newPartitions: FilePartition[] = Array.from(fileGroups.entries()).map(([file, data]) => ({
-    file,
-    comments: Array.from(data.threadIds),
-    severity: data.severity,
-    status: 'pending' as const
-  }));
-
-  // Add to existing run (only adds files not already present)
+  // Add new comments/partitions to the existing run
   return stateManager.addPartitions(newPartitions);
 }
 
@@ -190,8 +184,7 @@ export async function prClaimWork(
 
       // Auto-allow replacement if run is old (>5 minutes) - workers complete quickly
       const runAge = stateManager.getRunAge();
-      const OLD_RUN_THRESHOLD = 5 * 60 * 1000; // 5 minutes
-      const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD) || hasCompletedAt;
+      const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD_MS) || hasCompletedAt;
 
       if (isActive && !force && !autoForce) {
         // Current run is still active - cannot replace (unless forced or old/completed)
@@ -204,7 +197,7 @@ export async function prClaimWork(
       // Current run completed OR force=true OR old run - safe to replace
       if ((force || autoForce) && isActive) {
         const reason = hasCompletedAt ? 'previously completed' : 'old';
-        console.warn(`[coordination] Force-replacing active run ${currentRun.runId} (${reason}) for ${curr.owner}/${curr.repo}#${curr.pr}`);
+        logger.warning(`[coordination] Force-replacing active run ${currentRun.runId} (${reason}) for ${curr.owner}/${curr.repo}#${curr.pr}`);
       }
       needsInit = true;
     }
@@ -229,10 +222,10 @@ export async function prClaimWork(
     const run = stateManager.getCurrentRun();
     if (run) {
       const { owner, repo, pr } = run.prInfo;
-      const newPartitions = await refreshPartitions(client, owner, repo, pr);
+      const touchedPartitionsCount = await refreshPartitions(client, owner, repo, pr);
 
-      if (newPartitions > 0) {
-        console.warn(`[coordination] Refreshed partitions - added ${newPartitions} new files`);
+      if (touchedPartitionsCount > 0) {
+        logger.warning(`[coordination] Refreshed partitions - added/updated ${touchedPartitionsCount} partitions`);
         // Try to claim again after refresh
         partition = stateManager.claimPartition(agent_id);
       }
@@ -272,7 +265,7 @@ export async function prReportProgress(
   return {
     status: 'success',
     file,
-    new_status: status
+    new_status: status === 'skipped' ? 'done' : status
   };
 }
 
@@ -292,6 +285,15 @@ export async function prGetWorkStatus(
 export async function prResetCoordination(
   input: ResetCoordinationInput
 ) {
+  // Validate confirm field
+  if (!input.confirm) {
+    throw new StructuredError(
+      'permission',
+      'Must explicitly confirm reset by passing confirm=true',
+      false
+    );
+  }
+
   const currentRun = stateManager.getCurrentRun();
   const wasActive = stateManager.isRunActive();
 

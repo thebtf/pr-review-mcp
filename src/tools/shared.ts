@@ -14,12 +14,14 @@ import type {
 } from '../github/types.js';
 import { extractPrompt, extractTitle, truncateBody } from '../extractors/prompt.js';
 import { extractSeverity } from '../extractors/severity.js';
+import { logger } from '../logging.js';
 import {
   parseNitpicksFromReviewBody,
   nitpickToProcessedComment,
   parseOutsideDiffComments,
   outsideDiffToProcessedComment
 } from '../extractors/coderabbit-nitpicks.js';
+import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
 import { stateManager } from '../coordination/state.js';
 
 /**
@@ -55,14 +57,38 @@ async function fetchCodeRabbitNitpicks(
       parseOutsideDiffComments(review.id, review.body)
     );
 
-    // Convert to ProcessedComment format and combine
-    return [
+    // Convert to ProcessedComment format
+    const initialComments = [
       ...allNitpicks.map(nitpickToProcessedComment),
       ...allOutsideDiff.map(outsideDiffToProcessedComment)
     ];
+
+    // Handle Multi-Issue Comments
+    const finalComments: ProcessedComment[] = [];
+    for (const comment of initialComments) {
+      if (detectMultiIssue(comment.body)) {
+        const children = splitMultiIssue(comment, comment.body);
+        const childIds = children.map(c => c.id);
+        
+        // Register in state manager
+        await stateManager.registerParentChild(comment.id, childIds, { owner, repo, pr });
+        
+        // Update resolution status from state
+        for (const child of children) {
+          child.resolved = await stateManager.isChildResolved(child.id, { owner, repo, pr });
+        }
+        
+        // Add children instead of parent
+        finalComments.push(...children);
+      } else {
+        finalComments.push(comment);
+      }
+    }
+
+    return finalComments;
   } catch (error) {
     // Silently fail - nitpicks are a bonus, not critical
-    console.error('Failed to fetch CodeRabbit nitpicks:', error);
+    logger.warning('Failed to fetch CodeRabbit nitpicks', { error: error instanceof Error ? error.message : String(error) });
     return [];
   }
 }
@@ -195,12 +221,15 @@ export async function fetchAllThreads(
     });
 
     // Prepend nitpicks to comments (they appear first as "synthetic" comments)
-    comments.unshift(...filteredNitpicks);
+    // But respect maxItems limit - only add as many nitpicks as we have room for
+    const roomForNitpicks = Math.max(0, maxItems - comments.length);
+    const nitpicksToAdd = filteredNitpicks.slice(0, roomForNitpicks);
+    comments.unshift(...nitpicksToAdd);
 
-    // Adjust total count to include nitpicks
+    // Adjust total count to include ALL unresolved nitpicks (for pagination awareness)
     totalCount += unresolvedNitpicks.length;
   }
 
-  const hasMore = comments.length >= maxItems;
+  const hasMore = comments.length >= maxItems || totalCount > comments.length;
   return { comments, totalCount, cursor, hasMore };
 }

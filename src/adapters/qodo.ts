@@ -220,7 +220,7 @@ function parseSecurityConcerns(
  *
  * TODO: Improve body extraction - currently returns empty for some Qodo formats.
  * The regex may not match all HTML structures used by Qodo.
- * See: https://github.com/thebtf/pr-review-mcp/issues/TBD
+ * See: https://github.com/thebtf/pr-review-mcp/issues/5
  */
 function parseFocusAreas(
   body: string,

@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod';
-import { GitHubClient } from '../github/client.js';
+import { GitHubClient, StructuredError } from '../github/client.js';
 import { QUERIES } from '../github/queries.js';
 
 export const ListPRsInputSchema = z.object({
@@ -30,7 +30,7 @@ interface PRNode {
   additions: number;
   deletions: number;
   changedFiles: number;
-  reviewThreads: { totalCount: number };
+  reviewThreads: { totalCount: number; nodes: Array<{ isResolved: boolean }> };
   comments: { totalCount: number };
 }
 
@@ -99,28 +99,41 @@ export async function prListPRs(
     }
   );
 
+  if (!response.repository) {
+    throw new StructuredError(
+      'not_found',
+      `Repository ${owner}/${repo} not found`,
+      false
+    );
+  }
+
   const prData = response.repository.pullRequests;
 
-  const pullRequests: PRInfo[] = prData.nodes.map(pr => ({
-    number: pr.number,
-    title: pr.title,
-    state: pr.state,
-    isDraft: pr.isDraft,
-    author: pr.author?.login || 'unknown',
-    branch: pr.headRefName,
-    baseBranch: pr.baseRefName,
-    mergeable: pr.mergeable,
-    reviewDecision: pr.reviewDecision,
-    stats: {
-      additions: pr.additions,
-      deletions: pr.deletions,
-      changedFiles: pr.changedFiles,
-      reviewThreads: pr.reviewThreads.totalCount,
-      comments: pr.comments.totalCount
-    },
-    createdAt: pr.createdAt,
-    updatedAt: pr.updatedAt
-  }));
+  const pullRequests: PRInfo[] = prData.nodes.map(pr => {
+    // Calculate unresolved review threads count
+    const unresolvedThreads = pr.reviewThreads.nodes.filter(node => !node.isResolved).length;
+
+    return {
+      number: pr.number,
+      title: pr.title,
+      state: pr.state,
+      isDraft: pr.isDraft,
+      author: pr.author?.login || 'unknown',
+      branch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+      mergeable: pr.mergeable,
+      reviewDecision: pr.reviewDecision,
+      stats: {
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changedFiles: pr.changedFiles,
+        reviewThreads: unresolvedThreads, // Now contains unresolved count, not total
+        comments: pr.comments.totalCount
+      },
+      createdAt: pr.createdAt,
+      updatedAt: pr.updatedAt
+    };
+  });
 
   return {
     repo: `${owner}/${repo}`,

@@ -115,13 +115,56 @@ export const QUERIES = {
             additions
             deletions
             changedFiles
-            reviewThreads {
+            reviewThreads(first: 50) {
               totalCount
+              nodes {
+                isResolved
+              }
             }
             comments {
               totalCount
             }
           }
+        }
+      }
+    }
+  `,
+
+  /**
+   * Get a single pull request by number
+   */
+  getPullRequest: `
+    query($owner: String!, $repo: String!, $pr: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          number
+          title
+          state
+          isDraft
+          createdAt
+          updatedAt
+          author { login }
+          baseRefName
+          headRefName
+          mergeable
+          reviewDecision
+        }
+      }
+    }
+  `,
+
+  /**
+   * Add reaction to a subject (comment, review, etc.)
+   * Reaction content: THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY, CONFUSED, HEART, ROCKET, EYES
+   */
+  addReaction: `
+    mutation($subjectId: ID!, $content: ReactionContent!) {
+      addReaction(input: { subjectId: $subjectId, content: $content }) {
+        reaction {
+          content
+        }
+        subject {
+          id
         }
       }
     }

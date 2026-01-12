@@ -54,6 +54,14 @@ export interface NitpickResolution {
   resolvedBy: string;
 }
 
+export interface ParentChildEntry {
+  childIds: string[];
+  childStatus: Record<string, 'pending' | 'resolved'>;
+  registeredAt: string;
+}
+
+export type ParentChildMap = Record<string, ParentChildEntry>;
+
 export interface AgentState {
   agentId: string;
   claimedFiles: string[];

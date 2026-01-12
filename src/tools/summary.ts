@@ -27,16 +27,20 @@ export async function prSummary(
   const validated = SummaryInputSchema.parse(input);
   const { owner, repo, pr } = validated;
 
-  // Fetch review threads, Qodo review, and tracker resolved status in parallel
-  const [threadsResult, qodoReview, trackerResolved] = await Promise.all([
+  // Fetch review threads, Qodo review, tracker resolved status, and nitpicks count in parallel
+  const [threadsResult, qodoReview, trackerResolved, resolvedNitpicksCount] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { maxItems: 1000 }),
     fetchQodoReview(owner, repo, pr),
-    getTrackerResolvedMap(owner, repo, pr)
+    getTrackerResolvedMap(owner, repo, pr),
+    stateManager.getResolvedNitpicksCount({ owner, repo, pr })
   ]);
 
   const { comments, totalCount } = threadsResult;
-  const unresolvedNitpicks = comments.filter(c => c.threadId.startsWith('coderabbit-nitpick-'));
-  const resolvedNitpicksCount = stateManager.getResolvedNitpicksCount();
+  // Count synthetic CodeRabbit comments (nitpicks + outside-diff)
+  const unresolvedNitpicks = comments.filter(c =>
+    c.threadId.startsWith('coderabbit-nitpick-') ||
+    c.threadId.startsWith('coderabbit-outside-diff-')
+  );
   const totalNitpicksCount = unresolvedNitpicks.length + resolvedNitpicksCount;
 
   // Get Qodo comments with resolved status from tracker

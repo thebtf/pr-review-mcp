@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { GitHubClient } from '../github/client.js';
+import { logger } from '../logging.js';
 import { fetchAllThreads } from './shared.js';
 import type { ChangesInput, ChangesOutput, ListComment } from '../github/types.js';
 
@@ -60,7 +61,7 @@ export async function prChanges(
     // If cursor is invalid, fetch from beginning (max 1 retry)
     if (retryCount < 1 && e instanceof Error &&
         (e.message.includes('cursor') || e.message.includes('invalid'))) {
-      console.warn('Cursor invalid, fetching from beginning');
+      logger.warning('Cursor invalid, fetching from beginning');
       return prChanges({ ...input, cursor: undefined }, client, retryCount + 1);
     }
     throw e;

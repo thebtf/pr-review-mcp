@@ -2,12 +2,22 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
+import { logger } from '../logging.js';
+import {
+  registerParentChild as registerParentChildInPR,
+  markChildResolved as markChildResolvedInPR,
+  isChildResolved as isChildResolvedInPR,
+  getParentIdForChild as getParentIdForChildInPR,
+  markNitpickResolved as markNitpickResolvedInPR,
+  isNitpickResolved as isNitpickResolvedInPR
+} from '../github/state-comment.js';
 import type {
   CoordinationState,
   FilePartition,
   AgentState,
   PartitionResult,
-  NitpickResolution
+  NitpickResolution,
+  ParentChildEntry
 } from './types.js';
 
 /**
@@ -45,7 +55,7 @@ class CoordinationStateManager {
   ): string {
     if (this.currentRun) {
       const status = this.currentRun.completedAt ? 'completed' : 'active';
-      console.warn(
+      logger.warning(
         `[coordination] Replacing ${status} run ${this.currentRun.runId} for ` +
         `${this.currentRun.prInfo.owner}/${this.currentRun.prInfo.repo}#${this.currentRun.prInfo.pr} ` +
         `with new run for ${prInfo.owner}/${prInfo.repo}#${prInfo.pr}`
@@ -192,22 +202,95 @@ class CoordinationStateManager {
     };
   }
 
-  async markNitpickResolved(nitpickId: string, agentId: string): Promise<void> {
-    await this.ensureNitpicksLoaded();
+  async markNitpickResolved(
+    nitpickId: string,
+    agentId: string,
+    prInfo?: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    // Prefer GitHub state-comment API
+    if (prInfo) {
+      try {
+        await markNitpickResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, nitpickId, agentId);
+        return;
+      } catch (error) {
+        logger.warning('[state] Failed to mark nitpick resolved in GitHub, falling back to local', error);
+      }
+    }
+
+    // Fallback to local persistence
+    await this.ensureNitpicksLoaded(prInfo);
     this.resolvedNitpicks.set(nitpickId, {
       resolvedAt: new Date().toISOString(),
       resolvedBy: agentId
     });
-    await this.persistNitpicksAsync();
+    await this.persistNitpicksAsync(prInfo);
   }
 
-  async isNitpickResolved(nitpickId: string): Promise<boolean> {
-    await this.ensureNitpicksLoaded();
+  async isNitpickResolved(
+    nitpickId: string,
+    prInfo?: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    // Prefer GitHub state-comment API
+    if (prInfo) {
+      try {
+        return await isNitpickResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, nitpickId);
+      } catch (error) {
+        logger.warning('[state] Failed to check nitpick resolved in GitHub, falling back to local', error);
+      }
+    }
+
+    // Fallback to local persistence
+    await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.has(nitpickId);
   }
 
-  getResolvedNitpicksCount(): number {
+  async getResolvedNitpicksCount(prInfo?: { owner: string; repo: string; pr: number }): Promise<number> {
+    await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.size;
+  }
+
+  // --- Parent/Child Coordination ---
+
+  async registerParentChild(
+    parentId: string,
+    childIds: string[],
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    await registerParentChildInPR(prInfo.owner, prInfo.repo, prInfo.pr, parentId, childIds);
+  }
+
+  async markChildResolved(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    await markChildResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
+  }
+
+  async isChildResolved(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    return await isChildResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
+  }
+
+  async areAllChildrenResolved(
+    parentId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    // Check each child's status - we need to get the parent entry to know which children exist
+    const state = await import('../github/state-comment.js').then(m => m.loadState(prInfo.owner, prInfo.repo, prInfo.pr));
+    const entry = state.parentChildren[parentId];
+
+    if (!entry) return true; // Treat unknown parents as fully resolved (fallback)
+
+    return Object.values(entry.childStatus).every(status => status === 'resolved');
+  }
+
+  async getParentIdForChild(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<string | null> {
+    return await getParentIdForChildInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
   }
 
   /**
@@ -281,22 +364,45 @@ class CoordinationStateManager {
       }
   }
 
-  private getPrKey(): string {
-    if (!this.currentRun) return 'unknown';
-    const { owner, repo, pr } = this.currentRun.prInfo;
-    return `${owner}-${repo}-${pr}`;
+  private getPrKey(prInfo?: { owner: string; repo: string; pr: number }): string {
+    const info = prInfo || this.currentRun?.prInfo;
+    if (!info) {
+      return 'unknown';
+    }
+    return `${info.owner}-${info.repo}-${info.pr}`;
   }
 
-  private getNitpicksPath(): string {
-    const prKey = this.getPrKey();
+  private async persistAllForCurrentPr(): Promise<void> {
+    if (!this.currentPrKey || this.currentPrKey === 'unknown') return;
+
+    const parts = this.currentPrKey.split('-');
+    const prStr = parts.pop();
+    const repo = parts.pop();
+    const owner = parts.join('-');
+    const oldPrInfo = owner && repo && prStr
+      ? { owner, repo, pr: parseInt(prStr, 10) }
+      : undefined;
+
+    if (this.nitpicksLoaded) {
+      await this.persistNitpicksAsync(oldPrInfo);
+    }
+  }
+
+  private getNitpicksPath(prInfo?: { owner: string; repo: string; pr: number }): string {
+    const prKey = this.getPrKey(prInfo);
     return path.join(process.cwd(), '.agent', 'status', `nitpicks-${prKey}.json`);
   }
 
-  private async ensureNitpicksLoaded(): Promise<void> {
-    const prKey = this.getPrKey();
+  private async ensureNitpicksLoaded(prInfo?: { owner: string; repo: string; pr: number }): Promise<void> {
+    const prKey = this.getPrKey(prInfo);
     if (this.nitpicksLoaded && this.currentPrKey === prKey) return;
 
-    const filePath = this.getNitpicksPath();
+    if (this.currentPrKey && this.currentPrKey !== prKey) {
+      await this.persistAllForCurrentPr();
+      this.nitpicksLoaded = false;
+    }
+
+    const filePath = this.getNitpicksPath(prInfo);
     if (existsSync(filePath)) {
       try {
         const data = await readFile(filePath, 'utf-8');
@@ -312,8 +418,8 @@ class CoordinationStateManager {
     this.currentPrKey = prKey;
   }
 
-  private async persistNitpicksAsync(): Promise<void> {
-    const filePath = this.getNitpicksPath();
+  private async persistNitpicksAsync(prInfo?: { owner: string; repo: string; pr: number }): Promise<void> {
+    const filePath = this.getNitpicksPath(prInfo);
     const dir = path.dirname(filePath);
 
     if (!existsSync(dir)) {
@@ -368,36 +474,64 @@ class CoordinationStateManager {
 
   /**
    * Add new partitions to an existing run (for dynamic partition refresh)
-   * Only adds partitions for files that don't already exist in the run
-   * Reopens the run if it was completed
-   * @returns Number of new partitions added
+   * Merges new comments into existing file partitions or creates new partitions
+   * Reopens the run if it was completed and work was added/updated
+   * @returns Number of partitions touched (added or updated with new comments)
    */
   addPartitions(partitions: FilePartition[]): number {
     if (!this.currentRun) return 0;
 
-    let added = 0;
+    let touched = 0;
+
     for (const p of partitions) {
-      // Only add if file doesn't already have a partition
-      if (!this.currentRun.partitions.has(p.file)) {
+      const existing = this.currentRun.partitions.get(p.file);
+      if (!existing) {
+        // New file partition - add it
         this.currentRun.partitions.set(p.file, { ...p, status: 'pending' });
-        added++;
+        touched++;
+        continue;
+      }
+
+      // Merge new comments for existing file partitions
+      const existingComments = new Set(existing.comments ?? []);
+      const incomingComments = p.comments ?? [];
+      let hasNew = false;
+      for (const c of incomingComments) {
+        if (!existingComments.has(c)) {
+          existingComments.add(c);
+          hasNew = true;
+        }
+      }
+
+      if (hasNew) {
+        // If the partition was already completed, reopen it for new work
+        const shouldReopen = existing.status === 'done' || existing.status === 'failed';
+        this.currentRun.partitions.set(p.file, {
+          ...existing,
+          comments: Array.from(existingComments),
+          status: shouldReopen ? 'pending' : existing.status,
+          claimedBy: shouldReopen ? undefined : existing.claimedBy,
+          claimedAt: shouldReopen ? undefined : existing.claimedAt,
+          result: shouldReopen ? undefined : existing.result
+        });
+        touched++;
       }
     }
 
-    // Reopen run if it was completed and we added new work
-    if (added > 0 && this.currentRun.completedAt) {
-      console.warn(`[coordination] Reopening completed run ${this.currentRun.runId} - added ${added} new partitions`);
+    // Reopen run if it was completed and we added/updated work
+    if (touched > 0 && this.currentRun.completedAt) {
+      logger.warning(`[coordination] Reopening completed run ${this.currentRun.runId} - added/updated ${touched} partitions`);
       this.currentRun.completedAt = undefined;
     }
 
-    return added;
+    return touched;
   }
 
   /**
    * Check if all current partitions are done/failed (for refresh check)
    */
   allPartitionsDone(): boolean {
-    if (!this.currentRun) return true;
+    if (!this.currentRun) return false;
     return Array.from(this.currentRun.partitions.values()).every(
       p => p.status === 'done' || p.status === 'failed'
     );

@@ -16,6 +16,7 @@ import { prSummary } from '../tools/summary.js';
 import { prListPRs } from '../tools/list-prs.js';
 import { prGetWorkStatus } from '../tools/coordination.js';
 import { getEnvConfig, type InvokableAgentId, type ReviewMode } from '../agents/registry.js';
+import { logger } from '../logging.js';
 
 // ============================================================================
 // Types
@@ -49,8 +50,8 @@ interface ParsedPRUrl {
  * - owner/repo#123
  */
 function parseGitHubPRUrl(input: string): ParsedPRUrl | null {
-  // Full URL pattern
-  const urlPattern = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
+  // Full URL pattern - supports URLs with trailing slashes or paths
+  const urlPattern = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/i;
   const urlMatch = input.match(urlPattern);
   if (urlMatch) {
     return {
@@ -61,7 +62,7 @@ function parseGitHubPRUrl(input: string): ParsedPRUrl | null {
   }
 
   // Short format: owner/repo#123
-  const shortPattern = /^([^/]+)\/([^#]+)#(\d+)$/;
+  const shortPattern = /^([^/]+)\/([^/#]+)#(\d+)$/;
   const shortMatch = input.match(shortPattern);
   if (shortMatch) {
     return {
@@ -174,6 +175,14 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 
 ## Workflow Steps
 
+### Step 0: MULTI-PR MODE (if no specific PR provided)
+\`\`\`
+pr_list_prs { owner, repo, state: "OPEN" }
+\`\`\`
+- Sort PRs by number ascending (oldest first)
+- For EACH PR: execute Steps 1-9 completely before moving to next
+- Log: "Processing PR {N} of {TOTAL}: #{PR_NUMBER}"
+
 ### Step 1: ESCAPE CHECK
 \`\`\`
 pr_labels { owner, repo, pr, action: "get" }
@@ -208,37 +217,77 @@ pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
+**DYNAMIC WORKER COUNT:**
+\`\`\`
+worker_count = min(max_workers, max(1, ceil(unresolved / 10)))
+Examples: 1-10 comments → 1 worker, 11-20 → 2, 21-30 → 3, 41+ → max_workers (5)
+\`\`\`
+
 **CRITICAL: Send ALL Task calls in ONE message for parallelism.**
 
 \`\`\`typescript
-// SINGLE message with MULTIPLE Task calls:
+// SINGLE message with N Task calls (N = calculated worker_count):
 Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-1..." })
-Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-2..." })
-Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet", prompt: "...worker-3..." })
+// ... repeat for each worker up to N
 \`\`\`
 
 **Worker prompt template:**
 \`\`\`
-Execute skill pr-review-worker.
+# PR Review Worker {N}
 
-Parameters:
+You are worker-{N} for PR review. Work AUTONOMOUSLY until no work remains.
+
+## Parameters
 - agent_id: worker-{N}
 - owner: {OWNER}
 - repo: {REPO}
 - pr: {PR_NUMBER}
-- spawned_by_orchestrator: true
 
-CRITICAL FIRST STEP (MCP tool bootstrap):
-1) Call MCPSearch to load MCP tools:
-   - MCPSearch query: "select:mcp__pr__pr_claim_work"
-   - MCPSearch query: "select:mcp__pr__pr_get"
-   - MCPSearch query: "select:mcp__pr__pr_resolve"
-   - MCPSearch query: "select:mcp__pr__pr_report_progress"
-   - MCPSearch query: "select:mcp__serena__find_symbol"
-   - MCPSearch query: "select:mcp__serena__replace_symbol_body"
+## Step 0: MCP BOOTSTRAP (FIRST!)
+Load tools via MCPSearch:
+- "select:mcp__pr__pr_claim_work"
+- "select:mcp__pr__pr_get"
+- "select:mcp__pr__pr_resolve"
+- "select:mcp__pr__pr_report_progress"
 
-Then claim partitions, fix comments, resolve threads.
-Work autonomously until no_work.
+## Workflow Loop
+
+### 1. CLAIM
+\`\`\`
+pr_claim_work { agent_id: "worker-{N}", pr_info: { owner, repo, pr } }
+\`\`\`
+- "claimed" → proceed
+- "no_work" → EXIT (run build first if you made changes)
+
+### 2. PROCESS each threadId in partition.comments
+\`\`\`
+pr_get { owner, repo, pr, id: threadId }
+\`\`\`
+- Read the comment, understand the issue
+- Fix the code using Edit/Write tools
+- Resolve:
+\`\`\`
+pr_resolve { owner, repo, pr, threadId }
+\`\`\`
+
+### 3. REPORT
+\`\`\`
+pr_report_progress {
+  agent_id: "worker-{N}",
+  file: partition.file,
+  status: "done",
+  result: { commentsProcessed: N, commentsResolved: N, errors: [] }
+}
+\`\`\`
+
+### 4. LOOP
+Return to Step 1 (claim next partition).
+
+## Rules
+- NO questions, NO confirmations
+- Process ALL comments in partition before reporting
+- If unsure about fix, make minimal safe change
+- Before EXIT: run build command if you modified code
 \`\`\`
 
 ### Step 7: MONITOR
@@ -325,19 +374,21 @@ function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string;
 
     // Check if it's just a number
     if (isPRNumber(args.pr)) {
+      const prNum = parseInt(args.pr, 10);
       return {
         owner: args.owner,
         repo: args.repo,
-        pr: parseInt(args.pr, 10),
+        pr: isNaN(prNum) ? undefined : prNum,
         prNumberOnly: !args.owner || !args.repo
       };
     }
   }
 
+  // Input is neither URL nor number - return without PR
   return {
     owner: args.owner,
     repo: args.repo,
-    pr: args.pr ? parseInt(args.pr, 10) : undefined
+    pr: undefined
   };
 }
 
@@ -348,7 +399,7 @@ async function buildContext(
   args: ReviewPromptArgs,
   client: GitHubClient
 ): Promise<PromptContext> {
-  const desiredWorkers = parseInt(args.workers || '3', 10);
+  const desiredWorkers = Math.max(1, parseInt(args.workers || '3', 10) || 3);
   const envConfig = getEnvConfig();
 
   // Normalize args (parse URL if provided)
@@ -394,8 +445,17 @@ async function buildContext(
         desiredWorkers,
         envConfig
       };
-    } catch {
-      // If pre-fetch fails, return minimal context
+    } catch (error) {
+      // If pre-fetch fails, log warning and return minimal context
+      if (process.env.DEBUG) {
+        console.error('[generateReviewPrompt] Pre-fetch failed:', error);
+      }
+      logger.warning('Failed to pre-fetch context for PR', {
+        owner: normalized.owner,
+        repo: normalized.repo,
+        pr: normalized.pr,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return {
         targets: [{ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }],
         desiredWorkers,
@@ -411,9 +471,11 @@ async function buildContext(
       client
     );
 
+    const { owner, repo } = normalized as { owner: string; repo: string };
+
     const targets: PRTarget[] = prs.pullRequests.map(p => ({
-      owner: normalized.owner!,
-      repo: normalized.repo!,
+      owner,
+      repo,
       pr: p.number,
       title: p.title,
       unresolved: p.stats.reviewThreads
@@ -427,7 +489,12 @@ async function buildContext(
       desiredWorkers,
       envConfig
     };
-  } catch {
+  } catch (error) {
+    logger.warning('Failed to fetch open PRs for repository', {
+      owner: normalized.owner,
+      repo: normalized.repo,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return { targets: [], desiredWorkers, envConfig };
   }
 }

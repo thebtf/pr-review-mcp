@@ -43,6 +43,9 @@ npm link
 
 - Node.js 18+
 - GitHub Token (see below)
+- **External MCP Services** (required for `pr-review` skill):
+  - **PR Review MCP** (this server) - provides `pr_*` coordination tools
+  - **Serena MCP** - provides code navigation and editing tools
 
 ## Configuration
 
@@ -204,6 +207,57 @@ Single agent:
 ```
 
 Supported agents: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`, or `all`
+
+## Required External MCP Services
+
+The `pr-review` and `pr-review-worker` skills depend on external MCP services. These must be configured in your Claude Desktop config.
+
+### PR Review MCP (this server)
+
+**Tools used by orchestrator:**
+- `mcp__pr__pr_summary` - Get PR statistics
+- `mcp__pr__pr_list_prs` - List open PRs
+- `mcp__pr__pr_invoke` - Invoke AI reviewers
+- `mcp__pr__pr_claim_work` - Claim file partition (coordination)
+- `mcp__pr__pr_report_progress` - Report worker progress
+- `mcp__pr__pr_get_work_status` - Check coordination state
+- `mcp__pr__pr_reset_coordination` - Reset coordination state
+
+**Tools used by workers:**
+- `mcp__pr__pr_claim_work` - Claim next partition
+- `mcp__pr__pr_get` - Get comment details with AI prompts
+- `mcp__pr__pr_resolve` - Mark thread as resolved
+- `mcp__pr__pr_report_progress` - Report completion
+
+**Configuration:** See "Claude Desktop Config" section above.
+
+### Serena MCP
+
+**Purpose:** Code navigation and symbol-level editing for workers.
+
+**Tools used by workers:**
+- `mcp__serena__get_symbols_overview` - Get file symbols (replaces Read)
+- `mcp__serena__find_symbol` - Find symbol definitions
+- `mcp__serena__search_for_pattern` - Search codebase (replaces Grep)
+- `mcp__serena__replace_symbol_body` - Edit code (replaces Edit)
+- `mcp__serena__find_referencing_symbols` - Find usages
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "pr-review": { ... },
+    "serena": {
+      "command": "npx",
+      "args": ["@daymxn/serena-mcp"]
+    }
+  }
+}
+```
+
+**Repository:** https://github.com/daymxn/serena
+
+**Behavior on missing tools:** Workers use MCPSearch with one-retry policy. If Serena tools are unavailable after retry, workers will fail with "Unknown tool" errors.
 
 ## Workflow Prompt
 

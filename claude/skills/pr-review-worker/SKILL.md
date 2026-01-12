@@ -10,11 +10,11 @@ user-invocable: false
 disable-model-invocation: true
 allowed-tools:
   - Bash
-  - mcp__pr-review__pr_claim_work
-  - mcp__pr-review__pr_list
-  - mcp__pr-review__pr_get
-  - mcp__pr-review__pr_resolve
-  - mcp__pr-review__pr_report_progress
+  - mcp__pr__pr_claim_work
+  - mcp__pr__pr_list
+  - mcp__pr__pr_get
+  - mcp__pr__pr_resolve
+  - mcp__pr__pr_report_progress
   # Serena MCP tools for code operations:
   - mcp__serena__get_symbols_overview
   - mcp__serena__find_symbol
@@ -117,10 +117,10 @@ This skill is NOT for direct user invocation. Only the pr-review orchestrator ma
 **Before ANY other action, load required MCP tools via MCPSearch:**
 
 ```
-MCPSearch query: "select:mcp__pr-review__pr_claim_work"
-MCPSearch query: "select:mcp__pr-review__pr_get"
-MCPSearch query: "select:mcp__pr-review__pr_resolve"
-MCPSearch query: "select:mcp__pr-review__pr_report_progress"
+MCPSearch query: "select:mcp__pr__pr_claim_work"
+MCPSearch query: "select:mcp__pr__pr_get"
+MCPSearch query: "select:mcp__pr__pr_resolve"
+MCPSearch query: "select:mcp__pr__pr_report_progress"
 MCPSearch query: "select:mcp__serena__get_symbols_overview"
 MCPSearch query: "select:mcp__serena__find_symbol"
 MCPSearch query: "select:mcp__serena__replace_symbol_body"
@@ -158,6 +158,8 @@ pr_get { owner, repo, pr, id: threadId }
 
 #### 2b. CONFIDENCE CHECK (One-Hop Investigation)
 
+**One-Hop Investigation:** Examine the immediate context around the issue - one level of function calls, one file boundary, or one logical scope - without deep traversal of the entire codebase.
+
 **Classify comment for trigger keywords:**
 
 | Category | Keywords | Action |
@@ -187,9 +189,26 @@ pr_get { owner, repo, pr, id: threadId }
 Continue with original fix - do NOT block on tech debt.
 
 #### 2c. APPLY FIX
-- Execute `aiPrompt` if present
-- Otherwise follow comment body and repo conventions
-- Verify fix compiles
+
+**If aiPrompt is present:**
+- Execute it as primary instruction source
+
+**If aiPrompt is missing:**
+1. Find repo conventions:
+   - Check `CONTRIBUTING.md`, `README.md`, `.editorconfig` in root
+   - Use `mcp__serena__search_for_pattern` for similar patterns in codebase
+   - Follow existing code style in the same file
+2. Handle ambiguous comments:
+   - Make the minimal safe change that addresses the core concern
+   - Prefer defensive changes (add null checks, improve validation)
+   - Document assumptions in code comments
+3. Fallback behavior:
+   - If comment is unclear: implement the safest interpretation
+   - If multiple solutions possible: choose the least invasive
+   - If truly blocked: skip thread, add to errors array in report
+
+**Always verify fix compiles before resolving.**
+
 
 #### 2d. RESOLVE THREAD
 ```
@@ -227,8 +246,12 @@ pr_report_progress {
 
 **Detection logic:**
 ```bash
-# Check root directory for marker files, use first match
-ls package.json *.csproj *.sln Cargo.toml go.mod pyproject.toml setup.py Makefile 2>/dev/null
+# Check root directory for marker files
+for f in package.json Cargo.toml go.mod pyproject.toml setup.py Makefile; do
+  [ -f "$f" ] && echo "$f" && break
+done
+# Check for .NET projects
+find . -maxdepth 1 -name "*.csproj" -o -name "*.sln" 2>/dev/null | head -1
 ```
 
 **If build fails:**
@@ -288,7 +311,7 @@ X Exiting with broken build
 ## Example Session
 
 ```
-0. MCPSearch "select:mcp__pr-review__pr_claim_work" -> tool loaded
+0. MCPSearch "select:mcp__pr__pr_claim_work" -> tool loaded
    MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
    ... (load all required tools)
 1. pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
