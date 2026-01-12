@@ -95,24 +95,49 @@ The server exposes **15 optimized tools** for agents.
 
 ### Prerequisites
 - Node.js 18+
-- A GitHub Personal Access Token (PAT) with `repo` scope.
+- A GitHub Personal Access Token (PAT) with `repo` scope
 
 ### Installation
 
+**Option 1: From GitHub (recommended)**
+```bash
+git clone https://github.com/thebtf/pr-review-mcp.git
+cd pr-review-mcp
+npm install && npm run build
+```
+
+**Option 2: From npm** *(after publish)*
 ```bash
 npm install -g pr-review-mcp
 ```
 
 ### Configuration
-Set your GitHub token in your environment:
 
+Set your GitHub token:
 ```bash
 export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
 ```
 
-### Usage with MCP Client
-Add to your MCP configuration (e.g., `claude_desktop_config.json`):
+### MCP Client Setup
 
+Add to `claude_desktop_config.json`:
+
+**From local clone:**
+```json
+{
+  "mcpServers": {
+    "pr-review": {
+      "command": "node",
+      "args": ["/path/to/pr-review-mcp/dist/index.js"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+**From npm** *(after publish)*:
 ```json
 {
   "mcpServers": {
