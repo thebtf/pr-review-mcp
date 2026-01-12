@@ -19,6 +19,7 @@ dist/
 Thumbs.db
 nul
 
-# Agent session data (nitpicks tracking, tech debt)
-.agent/status/
+# Agent session data (local only)
+.agent/
+.serena/
 tmpclaude-*
