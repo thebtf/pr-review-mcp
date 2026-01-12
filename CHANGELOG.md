@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-01-13
+
+### Added
+
+- **15 MCP Tools** for complete PR review automation
+  - `pr_summary` - PR statistics (total, resolved, by severity/file)
+  - `pr_list` - List comments with filtering
+  - `pr_list_prs` - List open PRs with activity stats
+  - `pr_get` - Get comment details with AI prompt extraction
+  - `pr_resolve` - Mark thread as resolved via GraphQL
+  - `pr_changes` - Incremental updates with cursor pagination
+  - `pr_invoke` - Invoke AI reviewers (CodeRabbit, Gemini, Codex, Sourcery, Qodo)
+  - `pr_poll_updates` - Poll for new comments and agent status
+  - `pr_labels` - Manage PR labels
+  - `pr_reviewers` - Manage PR reviewers
+  - `pr_create` - Create new PR
+  - `pr_merge` - Merge PR with safety checks
+  - `pr_claim_work` - Multi-agent work distribution
+  - `pr_report_progress` - Worker progress reporting
+  - `pr_get_work_status` - Orchestration status
+
+- **Multi-Agent Support**
+  - CodeRabbit (`coderabbitai[bot]`)
+  - Gemini (`gemini-code-assist[bot]`)
+  - Copilot (`copilot-pull-request-reviewer[bot]`)
+  - Sourcery (`sourcery-ai[bot]`)
+  - Qodo (`qodo-code-review[bot]`)
+  - Codex (`chatgpt-codex-connector[bot]`)
+
+- **Smart Parsing**
+  - CodeRabbit nitpick extraction from review bodies
+  - Multi-issue comment splitting
+  - AI prompt extraction with confidence levels
+  - Severity classification (CRIT/MAJOR/MINOR)
+
+- **Multi-Agent Orchestration**
+  - Parallel worker coordination
+  - File-based work partitioning
+  - Progress tracking and reporting
+  - GitHub comment-based state persistence
+
+- **MCP 2025-11-25 Compliance**
+  - Resource support (`pr://` URIs)
+  - Structured logging
+  - Tool annotations (readOnlyHint, destructiveHint)
+
+- **Resilience**
+  - Circuit breaker pattern for API stability
+  - Rate limit handling via @octokit plugins
+  - Cursor-based pagination for large PRs
+
+[0.1.0]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.0
