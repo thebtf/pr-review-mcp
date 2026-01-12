@@ -151,5 +151,22 @@ export const QUERIES = {
         }
       }
     }
+  `,
+
+  /**
+   * Add reaction to a subject (comment, review, etc.)
+   * Reaction content: THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY, CONFUSED, HEART, ROCKET, EYES
+   */
+  addReaction: `
+    mutation($subjectId: ID!, $content: ReactionContent!) {
+      addReaction(input: { subjectId: $subjectId, content: $content }) {
+        reaction {
+          content
+        }
+        subject {
+          id
+        }
+      }
+    }
   `
 } as const;

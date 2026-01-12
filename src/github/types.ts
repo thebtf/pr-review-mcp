@@ -121,6 +121,8 @@ export interface ProcessedComment {
   aiPrompt: string | null;
   aiPromptConfidence: 'high' | 'low' | 'absent';
   author: string;
+  parentId?: string;
+  childIds?: string[];
   createdAt: string | undefined;
   updatedAt: string | undefined;
   replies: ProcessedReply[];

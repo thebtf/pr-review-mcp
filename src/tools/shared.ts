@@ -21,6 +21,7 @@ import {
   parseOutsideDiffComments,
   outsideDiffToProcessedComment
 } from '../extractors/coderabbit-nitpicks.js';
+import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
 import { stateManager } from '../coordination/state.js';
 
 /**
@@ -56,11 +57,35 @@ async function fetchCodeRabbitNitpicks(
       parseOutsideDiffComments(review.id, review.body)
     );
 
-    // Convert to ProcessedComment format and combine
-    return [
+    // Convert to ProcessedComment format
+    const initialComments = [
       ...allNitpicks.map(nitpickToProcessedComment),
       ...allOutsideDiff.map(outsideDiffToProcessedComment)
     ];
+
+    // Handle Multi-Issue Comments
+    const finalComments: ProcessedComment[] = [];
+    for (const comment of initialComments) {
+      if (detectMultiIssue(comment.body)) {
+        const children = splitMultiIssue(comment, comment.body);
+        const childIds = children.map(c => c.id);
+        
+        // Register in state manager
+        await stateManager.registerParentChild(comment.id, childIds, { owner, repo, pr });
+        
+        // Update resolution status from state
+        for (const child of children) {
+          child.resolved = await stateManager.isChildResolved(child.id, { owner, repo, pr });
+        }
+        
+        // Add children instead of parent
+        finalComments.push(...children);
+      } else {
+        finalComments.push(comment);
+      }
+    }
+
+    return finalComments;
   } catch (error) {
     // Silently fail - nitpicks are a bonus, not critical
     logger.warning('Failed to fetch CodeRabbit nitpicks', { error: error instanceof Error ? error.message : String(error) });

@@ -3,12 +3,21 @@ import path from 'path';
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { logger } from '../logging.js';
+import {
+  registerParentChild as registerParentChildInPR,
+  markChildResolved as markChildResolvedInPR,
+  isChildResolved as isChildResolvedInPR,
+  getParentIdForChild as getParentIdForChildInPR,
+  markNitpickResolved as markNitpickResolvedInPR,
+  isNitpickResolved as isNitpickResolvedInPR
+} from '../github/state-comment.js';
 import type {
   CoordinationState,
   FilePartition,
   AgentState,
   PartitionResult,
-  NitpickResolution
+  NitpickResolution,
+  ParentChildEntry
 } from './types.js';
 
 /**
@@ -198,6 +207,17 @@ class CoordinationStateManager {
     agentId: string,
     prInfo?: { owner: string; repo: string; pr: number }
   ): Promise<void> {
+    // Prefer GitHub state-comment API
+    if (prInfo) {
+      try {
+        await markNitpickResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, nitpickId, agentId);
+        return;
+      } catch (error) {
+        logger.warning('[state] Failed to mark nitpick resolved in GitHub, falling back to local', error);
+      }
+    }
+
+    // Fallback to local persistence
     await this.ensureNitpicksLoaded(prInfo);
     this.resolvedNitpicks.set(nitpickId, {
       resolvedAt: new Date().toISOString(),
@@ -210,6 +230,16 @@ class CoordinationStateManager {
     nitpickId: string,
     prInfo?: { owner: string; repo: string; pr: number }
   ): Promise<boolean> {
+    // Prefer GitHub state-comment API
+    if (prInfo) {
+      try {
+        return await isNitpickResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, nitpickId);
+      } catch (error) {
+        logger.warning('[state] Failed to check nitpick resolved in GitHub, falling back to local', error);
+      }
+    }
+
+    // Fallback to local persistence
     await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.has(nitpickId);
   }
@@ -217,6 +247,50 @@ class CoordinationStateManager {
   async getResolvedNitpicksCount(prInfo?: { owner: string; repo: string; pr: number }): Promise<number> {
     await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.size;
+  }
+
+  // --- Parent/Child Coordination ---
+
+  async registerParentChild(
+    parentId: string,
+    childIds: string[],
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    await registerParentChildInPR(prInfo.owner, prInfo.repo, prInfo.pr, parentId, childIds);
+  }
+
+  async markChildResolved(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<void> {
+    await markChildResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
+  }
+
+  async isChildResolved(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    return await isChildResolvedInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
+  }
+
+  async areAllChildrenResolved(
+    parentId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<boolean> {
+    // Check each child's status - we need to get the parent entry to know which children exist
+    const state = await import('../github/state-comment.js').then(m => m.loadState(prInfo.owner, prInfo.repo, prInfo.pr));
+    const entry = state.parentChildren[parentId];
+
+    if (!entry) return true; // Treat unknown parents as fully resolved (fallback)
+
+    return Object.values(entry.childStatus).every(status => status === 'resolved');
+  }
+
+  async getParentIdForChild(
+    childId: string,
+    prInfo: { owner: string; repo: string; pr: number }
+  ): Promise<string | null> {
+    return await getParentIdForChildInPR(prInfo.owner, prInfo.repo, prInfo.pr, childId);
   }
 
   /**
@@ -298,6 +372,22 @@ class CoordinationStateManager {
     return `${info.owner}-${info.repo}-${info.pr}`;
   }
 
+  private async persistAllForCurrentPr(): Promise<void> {
+    if (!this.currentPrKey || this.currentPrKey === 'unknown') return;
+
+    const parts = this.currentPrKey.split('-');
+    const prStr = parts.pop();
+    const repo = parts.pop();
+    const owner = parts.join('-');
+    const oldPrInfo = owner && repo && prStr
+      ? { owner, repo, pr: parseInt(prStr, 10) }
+      : undefined;
+
+    if (this.nitpicksLoaded) {
+      await this.persistNitpicksAsync(oldPrInfo);
+    }
+  }
+
   private getNitpicksPath(prInfo?: { owner: string; repo: string; pr: number }): string {
     const prKey = this.getPrKey(prInfo);
     return path.join(process.cwd(), '.agent', 'status', `nitpicks-${prKey}.json`);
@@ -307,17 +397,9 @@ class CoordinationStateManager {
     const prKey = this.getPrKey(prInfo);
     if (this.nitpicksLoaded && this.currentPrKey === prKey) return;
 
-    // Persist current PR's nitpicks before switching
-    if (this.nitpicksLoaded && this.currentPrKey && this.currentPrKey !== prKey) {
-      // Parse old prKey to get prInfo for persistence
-      const parts = this.currentPrKey.split('-');
-      const prStr = parts.pop();
-      const repo = parts.pop();
-      const owner = parts.join('-'); // Handle owners with dashes
-      const oldPrInfo = owner && repo && prStr
-        ? { owner, repo, pr: parseInt(prStr, 10) }
-        : undefined;
-      await this.persistNitpicksAsync(oldPrInfo);
+    if (this.currentPrKey && this.currentPrKey !== prKey) {
+      await this.persistAllForCurrentPr();
+      this.nitpicksLoaded = false;
     }
 
     const filePath = this.getNitpicksPath(prInfo);

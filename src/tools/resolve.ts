@@ -9,6 +9,8 @@ import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview } from '../adapters/qodo.js';
 import { toggleQodoIssue } from '../adapters/qodo-tracker.js';
 import { stateManager } from '../coordination/state.js';
+import { addResolvedReaction, addReactionToNode } from '../github/state-comment.js';
+import { logger } from '../logging.js';
 import type { ResolveInput, ResolveOutput, ResolveThreadData } from '../github/types.js';
 
 export const ResolveInputSchema = z.object({
@@ -26,11 +28,61 @@ export async function prResolveWithContext(
   input: ResolveInput & { pr: number },
   client: GitHubClient
 ): Promise<ResolveOutput> {
-  const { owner, repo, pr, threadId } = input;
+  const { owner, repo, pr } = input;
+  let { threadId } = input;
 
   // Check if this is a Qodo issue ID
   if (threadId.startsWith('qodo-')) {
     return resolveQodoIssue(owner, repo, pr, threadId);
+  }
+
+  // Check if this is a child issue of a multi-issue comment
+  const parentId = await stateManager.getParentIdForChild(threadId, { owner, repo, pr });
+  if (parentId) {
+    await stateManager.markChildResolved(threadId, { owner, repo, pr });
+
+    // Try to add visual indicator reaction to parent comment
+    try {
+      if (parentId.startsWith('qodo-')) {
+        // Qodo: extract numeric comment ID from format qodo-{owner}-{repo}-{pr}-{commentId}
+        const parts = parentId.split('-');
+        const lastPart = parts[parts.length - 1];
+        const numericId = parseInt(lastPart, 10);
+        if (!isNaN(numericId)) {
+          await addResolvedReaction(owner, repo, numericId, '+1');
+          logger.debug('[resolve] Added reaction to Qodo comment', { parentId, numericId });
+        }
+      } else if (parentId.startsWith('PRRC_') || parentId.startsWith('PRR_') || parentId.startsWith('PRRT_')) {
+        // GraphQL node ID (review comment, review, or thread) - use GraphQL API
+        await addReactionToNode(parentId, '+1');
+        logger.debug('[resolve] Added reaction to review comment via GraphQL', { parentId });
+      } else if (parentId.startsWith('coderabbit-')) {
+        // Synthetic nitpick - no real GitHub entity to react to
+        logger.debug('[resolve] Skipping reaction for synthetic comment', { parentId });
+      } else {
+        // Try GraphQL for unknown node types (may be a node ID)
+        await addReactionToNode(parentId, '+1');
+        logger.debug('[resolve] Added reaction via GraphQL (unknown type)', { parentId });
+      }
+    } catch (err) {
+      // Reaction is optional, don't fail the resolve
+      logger.debug('[resolve] Failed to add reaction to parent (optional)', { parentId, error: err });
+    }
+
+    const allResolved = await stateManager.areAllChildrenResolved(parentId, { owner, repo, pr });
+    if (!allResolved) {
+      return {
+        success: true,
+        synthetic: true,
+        threadId,
+        message: 'Child issue resolved. Parent issue remains open until all children are resolved.'
+      };
+    }
+
+    // All children resolved - proceed to resolve the parent
+    // We switch the target threadId to the parentId so the subsequent logic handles the parent
+    // eslint-disable-next-line no-param-reassign
+    threadId = parentId;
   }
 
   // Handle synthetic CodeRabbit comments (nitpicks and outside-diff)
