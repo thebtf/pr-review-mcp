@@ -285,7 +285,7 @@ export async function prPollUpdates(
   // Parallel fetch of all update types
   const [commentsResult, commits, checkStatus, resolvedThreads, agentsStatus] = await Promise.all([
     includeTypes.includes('comments') || includeTypes.includes('reviews')
-      ? fetchAllThreads(client, owner, repo, pr, { maxItems: 100 })
+      ? fetchAllThreads(client, owner, repo, pr, { maxItems: 50 })
       : Promise.resolve({ comments: [], cursor: null, hasMore: false }),
 
     includeTypes.includes('commits')

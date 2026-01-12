@@ -221,12 +221,15 @@ export async function fetchAllThreads(
     });
 
     // Prepend nitpicks to comments (they appear first as "synthetic" comments)
-    comments.unshift(...filteredNitpicks);
+    // But respect maxItems limit - only add as many nitpicks as we have room for
+    const roomForNitpicks = Math.max(0, maxItems - comments.length);
+    const nitpicksToAdd = filteredNitpicks.slice(0, roomForNitpicks);
+    comments.unshift(...nitpicksToAdd);
 
-    // Adjust total count to include nitpicks
+    // Adjust total count to include ALL unresolved nitpicks (for pagination awareness)
     totalCount += unresolvedNitpicks.length;
   }
 
-  const hasMore = comments.length >= maxItems;
+  const hasMore = comments.length >= maxItems || totalCount > comments.length;
   return { comments, totalCount, cursor, hasMore };
 }
