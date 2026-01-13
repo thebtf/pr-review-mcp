@@ -30,6 +30,10 @@
   ],
   "author": "thebtf",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thebtf/pr-review-mcp.git"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
