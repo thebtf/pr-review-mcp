@@ -15,6 +15,7 @@ import {
 } from '../coordination/types.js';
 import { fetchAllThreads } from './shared.js';
 import { SEVERITY_ORDER, type Severity } from '../extractors/severity.js';
+import { detectReviewedAgents } from '../agents/detector.js';
 
 // ============================================================================
 // Constants
@@ -270,15 +271,33 @@ export async function prReportProgress(
 }
 
 export async function prGetWorkStatus(
-  input: GetWorkStatusInput
+  input: GetWorkStatusInput,
+  client: GitHubClient
 ) {
   // We currently ignore run_id in input as we only support singleton active run
   const { active, ...status } = stateManager.getStatus();
+  const isActive = stateManager.isRunActive();
+  const runAge = stateManager.getRunAge();
+
+  // Check for pending AI reviewers if we have an active run with PR info
+  let pendingAgents: string[] = [];
+  let reviewedAgents: string[] = [];
+  
+  if (status.prInfo) {
+    const { owner, repo, pr } = status.prInfo;
+    const detection = await detectReviewedAgents(client, owner, repo, pr);
+    pendingAgents = [...detection.pending];
+    reviewedAgents = [...detection.reviewed];
+  }
 
   return {
     ...status,
-    isActive: stateManager.isRunActive(),
-    runAge: stateManager.getRunAge()
+    isActive,
+    runAge,
+    pendingAgents,
+    reviewedAgents,
+    // Convenience flag: true only when all partitions done AND no pending agents
+    isFullyComplete: !isActive && pendingAgents.length === 0
   };
 }
 

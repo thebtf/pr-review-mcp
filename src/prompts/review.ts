@@ -422,7 +422,7 @@ async function buildContext(
       // Pre-fetch summary and work status in parallel
       const [summary, workStatus] = await Promise.all([
         prSummary({ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }, client),
-        prGetWorkStatus({})
+        prGetWorkStatus({}, client)
       ]);
 
       return {
