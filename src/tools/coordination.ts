@@ -297,7 +297,7 @@ export async function prGetWorkStatus(
     pendingAgents,
     reviewedAgents,
     // Convenience flag: true only when all partitions done AND no pending agents
-    isFullyComplete: !isActive && pendingAgents.length === 0
+    isFullyComplete: !isActive && pendingAgents.length === 0 && status.prInfo !== undefined
   };
 }
 

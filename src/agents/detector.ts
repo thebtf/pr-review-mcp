@@ -95,13 +95,12 @@ export async function detectReviewedAgents(
     // Fetch check runs for the head SHA (agents like CodeRabbit run as GitHub Checks)
     let checkRuns: { name: string; status: string; conclusion: string | null; app?: { slug?: string } }[] = [];
     try {
-      const { data: checksData } = await octokit.checks.listForRef({
+      const allCheckRuns = await octokit.paginate(octokit.checks.listForRef, {
         owner,
         repo,
         ref: headSha,
-        per_page: 100
       });
-      checkRuns = checksData.check_runs.map(cr => ({
+      checkRuns = allCheckRuns.map(cr => ({
         name: cr.name,
         status: cr.status,
         conclusion: cr.conclusion,

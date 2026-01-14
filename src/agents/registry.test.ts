@@ -60,7 +60,7 @@ describe('getDefaultAgents', () => {
   const originalEnv = process.env.PR_REVIEW_AGENTS;
 
   beforeEach(() => {
-    vi.resetModules();
+    // No module reset needed - getDefaultAgents reads env at call time
   });
 
   afterEach(() => {

@@ -24,7 +24,21 @@ if (isNaN(pr)) {
 console.log(`\n🔍 Detecting agents for ${owner}/${repo}#${pr}...\n`);
 
 const client = new GitHubClient();
-const result = await detectReviewedAgents(client, owner, repo, pr);
+
+try {
+  client.checkPrerequisites();
+} catch (error) {
+  console.error(`❌ ${error.message}`);
+  process.exit(1);
+}
+
+let result;
+try {
+  result = await detectReviewedAgents(client, owner, repo, pr);
+} catch (error) {
+  console.error(`❌ Error detecting agents: ${error.message}`);
+  process.exit(1);
+}
 
 console.log('📊 Detection Results:');
 console.log('─'.repeat(50));
