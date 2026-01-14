@@ -41,7 +41,8 @@ pr-review-mcp/
 │   │   └── qodo.ts         # Qodo issue comment adapter
 │   ├── agents/
 │   │   ├── registry.ts     # Agent configurations
-│   │   └── invoker.ts      # Agent invocation logic
+│   │   ├── invoker.ts      # Agent invocation logic
+│   │   └── detector.ts     # Smart agent detection
 │   └── extractors/
 │       ├── severity.ts     # Severity extraction
 │       └── prompt.ts       # AI prompt extraction
@@ -61,7 +62,7 @@ pr-review-mcp/
 | `pr_get` | Get full comment details + AI prompt |
 | `pr_resolve` | Mark review thread as resolved |
 | `pr_changes` | Incremental updates with cursor pagination |
-| `pr_invoke` | Invoke AI agents (CodeRabbit, Sourcery, Qodo) |
+| `pr_invoke` | Invoke AI agents with smart detection (skips agents that already reviewed) |
 
 ---
 
@@ -91,6 +92,34 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 | **Qodo** | **Issue comment** | `qodo-code-review[bot]` |
 
 ⚠️ Qodo uses a "persistent review" pattern — one issue comment updated on each commit.
+
+---
+
+## 🧠 SMART DETECTION
+
+`pr_invoke` includes smart detection to avoid re-invoking agents that already reviewed:
+
+**Default behavior:**
+- Detects agents that already submitted reviews (by author login)
+- Skips agents that already reviewed → returns in `skipped` array
+- Only CodeRabbit is invoked by default (configurable via `.github/pr-review.json`)
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `force: true` | Re-invoke agents even if they already reviewed |
+| `agent: "all"` | Invoke all configured agents (default: only CodeRabbit) |
+| `agent: "coderabbit"` | Invoke specific agent |
+
+**Response includes:**
+```json
+{
+  "invoked": ["CodeRabbit"],
+  "skipped": ["Gemini", "Codex"],
+  "failed": [],
+  "message": "Invoked: CodeRabbit. Skipped (already reviewed): Gemini, Codex"
+}
+```
 
 ---
 

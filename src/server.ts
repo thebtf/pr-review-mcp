@@ -605,7 +605,7 @@ export class PRReviewMCPServer {
       'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
       'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
       'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
-      'pr_get_work_status': createSimpleHandler(GetWorkStatusSchema, prGetWorkStatus),
+      'pr_get_work_status': createToolHandler(GetWorkStatusSchema, prGetWorkStatus),
       'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination)
     };
 

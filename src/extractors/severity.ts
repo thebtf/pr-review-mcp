@@ -143,8 +143,9 @@ export function extractSeverity(body: string | null | undefined, author?: string
 
 /**
  * Detect severity from Copilot comment content (heuristic)
+ * @internal Exported for testing
  */
-function detectCopilotSeverity(body: string): Severity {
+export function detectCopilotSeverity(body: string): Severity {
   const lower = body.toLowerCase();
 
   // Critical indicators

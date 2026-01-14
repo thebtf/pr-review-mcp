@@ -13,6 +13,8 @@ export interface InvokeOptions {
   files?: string[];
   /** Review only new changes since last review */
   incremental?: boolean;
+  /** Force re-invoke even if agent already reviewed (default: false) */
+  force?: boolean;
 }
 
 export interface InvokeResult {
@@ -169,29 +171,40 @@ export async function invokeMultipleAgents(
 /**
  * Aggregate multiple invoke results into a summary
  */
-export function aggregateResults(results: InvokeResult[]): {
+export function aggregateResults(
+  results: InvokeResult[],
+  skipped: string[] = []
+): {
   success: boolean;
   invoked: string[];
   failed: string[];
+  skipped: string[];
   results: InvokeResult[];
   message: string;
 } {
   const invoked = results.filter(r => r.success).map(r => r.agentName);
   const failed = results.filter(r => !r.success).map(r => r.agentName);
 
-  let message: string;
-  if (failed.length === 0) {
-    message = `Successfully invoked: ${invoked.join(', ')}`;
-  } else if (invoked.length === 0) {
-    message = `Failed to invoke: ${failed.join(', ')}`;
-  } else {
-    message = `Invoked: ${invoked.join(', ')}. Failed: ${failed.join(', ')}`;
+  const parts: string[] = [];
+  if (invoked.length > 0) {
+    parts.push(`Invoked: ${invoked.join(', ')}`);
   }
+  if (failed.length > 0) {
+    parts.push(`Failed: ${failed.join(', ')}`);
+  }
+  if (skipped.length > 0) {
+    parts.push(`Skipped (already reviewed): ${skipped.join(', ')}`);
+  }
+
+  const message = parts.length > 0
+    ? parts.join('. ')
+    : 'No agents processed';
 
   return {
     success: failed.length === 0,
     invoked,
     failed,
+    skipped,
     results,
     message
   };

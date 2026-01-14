@@ -4,9 +4,10 @@
 
 import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
+import { GitHubClient } from '../github/client.js';
 import {
   InvokableAgentId,
-  getInvokableAgentIds,
+  INVOKABLE_AGENTS,
   getDefaultAgents,
   isInvokableAgent
 } from '../agents/registry.js';
@@ -16,6 +17,8 @@ import {
   InvokeOptions,
   InvokeResult
 } from '../agents/invoker.js';
+import { detectReviewedAgents } from '../agents/detector.js';
+import { logger } from '../logging.js';
 
 // ============================================================================
 // Input/Output Schemas
@@ -25,12 +28,13 @@ export const InvokeInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive'),
-  agent: z.enum(['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'all'])
+  agent: z.enum(['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'copilot', 'all'])
     .describe('Agent to invoke (or "all" for configured agents)'),
   options: z.object({
     focus: z.string().optional().describe('Review focus: security, performance, best-practices'),
     files: z.array(z.string()).optional().describe('Specific files to review'),
-    incremental: z.boolean().optional().describe('Review only new changes')
+    incremental: z.boolean().optional().describe('Review only new changes'),
+    force: z.boolean().optional().describe('Force re-invoke even if agent already reviewed')
   }).optional()
 });
 
@@ -40,6 +44,8 @@ export interface InvokeOutput {
   success: boolean;
   invoked: string[];
   failed: string[];
+  /** Agents skipped because they already reviewed (unless force=true) */
+  skipped: string[];
   results: InvokeResult[];
   message: string;
 }
@@ -153,7 +159,45 @@ export async function prInvoke(
     agentsToInvoke = [agent];
   }
 
-  // Invoke agents
+  // Smart detection: skip agents that already reviewed (unless force=true)
+  const skipped: string[] = [];
+  const force = mergedOptions?.force ?? false;
+
+  if (!force) {
+    const client = new GitHubClient();
+    const detection = await detectReviewedAgents(client, owner, repo, pr);
+    
+    const originalCount = agentsToInvoke.length;
+    agentsToInvoke = agentsToInvoke.filter(agentId => {
+      if (detection.reviewed.has(agentId)) {
+        const agentName = INVOKABLE_AGENTS[agentId].name;
+        skipped.push(agentName);
+        logger.info(`[invoke] Skipping ${agentName} - already reviewed`);
+        return false;
+      }
+      return true;
+    });
+
+    if (skipped.length > 0) {
+      logger.info(`[invoke] Skipped ${skipped.length}/${originalCount} agents (already reviewed)`);
+    }
+  }
+
+  // If all agents were skipped, return early
+  if (agentsToInvoke.length === 0) {
+    return {
+      success: true,
+      invoked: [],
+      failed: [],
+      skipped,
+      results: [],
+      message: skipped.length > 0
+        ? `All agents already reviewed: ${skipped.join(', ')}. Use force=true to re-invoke.`
+        : 'No agents to invoke'
+    };
+  }
+
+  // Invoke remaining agents
   const results = await invokeMultipleAgents(
     owner,
     repo,
@@ -162,5 +206,5 @@ export async function prInvoke(
     mergedOptions
   );
 
-  return aggregateResults(results);
+  return aggregateResults(results, skipped);
 }

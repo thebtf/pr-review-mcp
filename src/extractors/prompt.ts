@@ -127,8 +127,9 @@ export function extractPrompt(body: string | null | undefined, source: CommentSo
 /**
  * Extract prompt from Gemini Code Assist comments
  * Gemini doesn't have explicit AI prompts - the whole description is the instruction
+ * @internal Exported for testing
  */
-function extractGeminiPrompt(body: string): PromptExtraction {
+export function extractGeminiPrompt(body: string): PromptExtraction {
   // Remove the severity badge
   const cleaned = body
     .replace(/!\[(critical|high|medium|low)\]\([^)]+\)/gi, '')
@@ -148,8 +149,9 @@ function extractGeminiPrompt(body: string): PromptExtraction {
 /**
  * Extract prompt from Copilot comments
  * Copilot uses ```suggestion blocks with description text above
+ * @internal Exported for testing
  */
-function extractCopilotPrompt(body: string): PromptExtraction {
+export function extractCopilotPrompt(body: string): PromptExtraction {
   // Extract suggestion block (committable change)
   const suggestionMatch = body.match(/```suggestion\n([\s\S]*?)```/);
 
@@ -185,8 +187,9 @@ function extractCopilotPrompt(body: string): PromptExtraction {
 /**
  * Extract prompt from Codex comments
  * Format: **<sub><sub>![P2 Badge](...)</sub></sub> Title**\n\nDescription\n\nUseful? React with...
+ * @internal Exported for testing
  */
-function extractCodexPrompt(body: string): PromptExtraction {
+export function extractCodexPrompt(body: string): PromptExtraction {
   // Remove badge and formatting
   let cleaned = body
     // Remove sub tags and badge
@@ -211,8 +214,9 @@ function extractCodexPrompt(body: string): PromptExtraction {
 
 /**
  * Clean extracted prompt while preserving code block indentation
+ * @internal Exported for testing
  */
-function cleanPrompt(raw: string | undefined): string {
+export function cleanPrompt(raw: string | undefined): string {
   if (!raw) return '';
 
   // First pass: remove HTML tags and markdown formatting
