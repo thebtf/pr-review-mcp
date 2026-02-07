@@ -389,21 +389,24 @@ export async function prPollUpdates(
     if (compact) {
       // Compact mode: return summary instead of full comment list
       const allComments = commentsResult.comments;
-      const unresolvedComments = allComments.filter(c => !c.resolved);
-
+      let unresolved = 0;
       const bySeverity: Record<string, number> = {};
       const bySource: Record<string, number> = {};
-      for (const c of unresolvedComments) {
-        const sev = c.severity ?? 'unknown';
-        bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
-        const src = c.source ?? 'unknown';
-        bySource[src] = (bySource[src] ?? 0) + 1;
+
+      for (const c of allComments) {
+        if (!c.resolved) {
+          unresolved++;
+          const sev = c.severity ?? 'unknown';
+          bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
+          const src = c.source ?? 'unknown';
+          bySource[src] = (bySource[src] ?? 0) + 1;
+        }
       }
 
       commentsSummary = {
         total: allComments.length,
-        unresolved: unresolvedComments.length,
-        new: filteredComments.length,
+        unresolved,
+        new: newCommentCount,
         bySeverity,
         bySource
       };

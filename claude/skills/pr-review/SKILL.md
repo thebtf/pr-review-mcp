@@ -225,7 +225,7 @@ Check `pendingAgents` array:
 pr_poll_updates { owner, repo, pr, include: ["comments", "status"] }
 ```
 Returns `commentsSummary` by default (compact mode) with counts: `total`, `unresolved`, `new`, `bySeverity`, `bySource`.
-Use `compact: false` only if you need individual `newComments[]` list.
+Use `compact: false` only if you need the individual `newComments[]` list.
 
 Decision:
 - `hasUpdates: true` with new comments → agents posted new reviews, get summary
