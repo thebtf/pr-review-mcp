@@ -1,6 +1,6 @@
 {
   "name": "pr-review-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for PR review processing with GraphQL-based GitHub integration",
   "main": "dist/index.js",
   "type": "module",
