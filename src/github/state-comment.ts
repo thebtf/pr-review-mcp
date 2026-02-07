@@ -2,7 +2,7 @@
  * GitHub State Comment - Persistent state storage in PR comments
  *
  * Uses hidden HTML comments as markers to find/update state.
- * Format: <!-- pr-review-mcp-state:v1 --> ... <!-- /pr-review-mcp-state -->
+ * Format: <!-- pr-review-mcp-state:v2 --> ... <!-- /pr-review-mcp-state -->
  */
 
 import { getOctokit, getGraphQL } from './octokit.js';
@@ -14,9 +14,9 @@ import type { ParentChildEntry } from '../coordination/types.js';
 // Constants
 // ============================================================================
 
-const STATE_MARKER_START = '<!-- pr-review-mcp-state:v1 -->';
+const STATE_MARKER_START = '<!-- pr-review-mcp-state:v2 -->';
 const STATE_MARKER_END = '<!-- /pr-review-mcp-state -->';
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 // ============================================================================
 // Types

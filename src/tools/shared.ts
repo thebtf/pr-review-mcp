@@ -42,20 +42,28 @@ async function fetchCodeRabbitNitpicks(
 
     const reviews = data?.repository?.pullRequest?.reviews?.nodes || [];
 
-    // Filter for CodeRabbit reviews only
-    const coderabbitReviews = reviews.filter(r =>
-      r.author?.login === 'coderabbitai' || r.author?.login === 'coderabbit[bot]'
-    );
+    // Filter for CodeRabbit reviews only, newest first
+    const coderabbitReviews = reviews
+      .filter(r => r.author?.login === 'coderabbitai' || r.author?.login === 'coderabbit[bot]')
+      .reverse(); // GraphQL returns oldest first; reverse to get newest first
 
-    // Extract nitpicks from each review body
-    const allNitpicks = coderabbitReviews.flatMap(review =>
-      parseNitpicksFromReviewBody(review.id, review.body)
-    );
+    if (coderabbitReviews.length === 0) return [];
 
-    // Extract outside diff range comments from each review body
-    const allOutsideDiff = coderabbitReviews.flatMap(review =>
-      parseOutsideDiffComments(review.id, review.body)
-    );
+    // Parse only the latest review (belt-and-suspenders with content-based dedup).
+    // CodeRabbit re-generates the full nitpick/outside-diff sections on each push,
+    // so older reviews contain stale duplicates.
+    // Fallback: if latest review parses to zero, try previous reviews.
+    // Note: Both nitpick and outside-diff sections are always present together in the
+    // same review body — CodeRabbit regenerates both on each pass. The `||` below is
+    // safe: finding either section means this is the active review with current data.
+    let allNitpicks: ReturnType<typeof parseNitpicksFromReviewBody> = [];
+    let allOutsideDiff: ReturnType<typeof parseOutsideDiffComments> = [];
+
+    for (const review of coderabbitReviews) {
+      allNitpicks = parseNitpicksFromReviewBody(review.body);
+      allOutsideDiff = parseOutsideDiffComments(review.body);
+      if (allNitpicks.length > 0 || allOutsideDiff.length > 0) break;
+    }
 
     // Convert to ProcessedComment format
     const initialComments = [
@@ -205,7 +213,7 @@ export async function fetchAllThreads(
   if (nitpicks.length > 0 && startCursor === null) {
     const unresolvedNitpicks: ProcessedComment[] = [];
     for (const n of nitpicks) {
-      const isResolved = await stateManager.isNitpickResolved(n.id);
+      const isResolved = await stateManager.isNitpickResolved(n.id, { owner, repo, pr });
       if (!isResolved) {
         unresolvedNitpicks.push(n);
       }

@@ -156,7 +156,7 @@ const { loadState, saveState } = stateModule;
 test('loadState returns empty state for new PR', async () => {
   // Use a test PR number that likely doesn't exist
   const state = await loadState(owner, repo, 99999);
-  assert(state.version === 1, 'Should have version 1');
+  assert(state.version === 2, 'Should have version 2');
   assert(Object.keys(state.parentChildren).length === 0, 'Should be empty');
 });
 
@@ -245,12 +245,12 @@ Just one line.
 </details>`;
 
 test('parseNitpicksFromReviewBody extracts all nitpicks', () => {
-  const nitpicks = parseNitpicksFromReviewBody('PRR_test', nitpickReviewBody);
+  const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   assert(nitpicks.length === 3, `Expected 3 nitpicks, got ${nitpicks.length}`);
 });
 
 test('parseNitpicksFromReviewBody preserves file associations', () => {
-  const nitpicks = parseNitpicksFromReviewBody('PRR_test', nitpickReviewBody);
+  const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   const scriptNitpicks = nitpicks.filter(n => n.file === 'scripts/test.mjs');
   const srcNitpicks = nitpicks.filter(n => n.file === 'src/file.ts');
   assert(scriptNitpicks.length === 2, 'Should have 2 nitpicks for scripts/test.mjs');
@@ -258,7 +258,7 @@ test('parseNitpicksFromReviewBody preserves file associations', () => {
 });
 
 test('parseNitpicksFromReviewBody parses line ranges', () => {
-  const nitpicks = parseNitpicksFromReviewBody('PRR_test', nitpickReviewBody);
+  const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   const first = nitpicks.find(n => n.line === '22-49');
   const single = nitpicks.find(n => n.line === '100');
   assert(first, 'Should parse range 22-49');
