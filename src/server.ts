@@ -53,6 +53,11 @@ import {
   REVIEW_PROMPT_DEFINITION,
   type ReviewPromptArgs
 } from './prompts/review.js';
+import {
+  generateSetupPrompt,
+  SETUP_PROMPT_DEFINITION,
+  type SetupPromptArgs
+} from './prompts/setup.js';
 import { listPRResources, readPRResource } from './resources/pr.js';
 
 // ============================================================================
@@ -107,6 +112,11 @@ export class PRReviewMCPServer {
             name: REVIEW_PROMPT_DEFINITION.name,
             description: REVIEW_PROMPT_DEFINITION.description,
             arguments: REVIEW_PROMPT_DEFINITION.arguments
+          },
+          {
+            name: SETUP_PROMPT_DEFINITION.name,
+            description: SETUP_PROMPT_DEFINITION.description,
+            arguments: SETUP_PROMPT_DEFINITION.arguments
           }
         ] as Prompt[]
       };
@@ -125,6 +135,26 @@ export class PRReviewMCPServer {
         };
 
         const promptText = await generateReviewPrompt(promptArgs, this.githubClient);
+
+        return {
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: promptText
+              }
+            }
+          ]
+        };
+      }
+
+      if (name === 'setup') {
+        const setupArgs: SetupPromptArgs = {
+          repo: args?.repo as string | undefined
+        };
+
+        const promptText = await generateSetupPrompt(setupArgs);
 
         return {
           messages: [
@@ -297,7 +327,7 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_invoke',
-            description: 'Invoke AI code review agents on a PR',
+            description: `Invoke AI code review agents on a PR. When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, (2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). Use pr:setup prompt to configure per-repo agents. Smart detection skips agents that already reviewed (use force to override).`,
             inputSchema: {
               type: 'object',
               properties: {

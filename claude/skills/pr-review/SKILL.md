@@ -11,6 +11,7 @@ model: sonnet
 allowed-tools:
   - Task
   - Bash
+  - ToolSearch
   - mcp__pr__pr_summary
   - mcp__pr__pr_list_prs
   - mcp__pr__pr_get_work_status
@@ -73,29 +74,29 @@ Autonomous multi-agent PR review. Spawns parallel workers, monitors progress, en
 ## State Machine
 
 ```
-INIT -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
-                                            |
-                       +--------------------+--------------------+
-                       |                                         |
-                 allAgentsReady?                           pause label?
-                       |                                         |
-                 +-----+-----+                              STOP (user)
-                 no          yes
-                 |            |
-              (wait)    unresolved > 0?
-                             |
-                       +-----+-----+
-                       yes         no
-                       |            |
-                SPAWN_WORKERS    BUILD_TEST -> COMPLETE
-                       |
-                       v
-                   MONITOR
-                       |
-                       v
-                  BUILD_TEST
-                       |
-                       +---> POLL_WAIT (re-review cycle)
+INIT -> MCP_BOOTSTRAP -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
+                                                             |
+                            +--------------------------------+----------+
+                            |                                            |
+                      pendingAgents?                               pause label?
+                            |                                            |
+                      +-----+-----+                                STOP (user)
+                      >0          =0
+                      |            |
+                   (wait 30s)  unresolved > 0?
+                                   |
+                             +-----+-----+
+                             yes         no
+                             |            |
+                      SPAWN_WORKERS    BUILD_TEST
+                             |            |
+                             v            v
+                         MONITOR    pendingAgents?
+                             |            |
+                             v         +--+--+
+                        BUILD_TEST     >0    =0
+                             |         |      |
+                             +---> POLL_WAIT  COMPLETE
 ```
 
 ---
@@ -124,7 +125,27 @@ Execute ALL steps automatically. Do NOT stop between steps.
 When spawning workers (Step 6), you MUST send multiple Task tool calls in a SINGLE message.
 This is how Claude Code achieves parallelism. Sequential calls = no parallelism.
 
-### Step 0: RESOLVE PARAMETERS & MULTI-PR LOOP
+### Step 0: MCP BOOTSTRAP (MANDATORY FIRST)
+
+**Before ANY MCP tool call, load all required tools via ToolSearch:**
+
+```
+ToolSearch query: "select:mcp__pr__pr_summary"
+ToolSearch query: "select:mcp__pr__pr_list_prs"
+ToolSearch query: "select:mcp__pr__pr_get_work_status"
+ToolSearch query: "select:mcp__pr__pr_labels"
+ToolSearch query: "select:mcp__pr__pr_invoke"
+ToolSearch query: "select:mcp__pr__pr_poll_updates"
+ToolSearch query: "select:mcp__pr__pr_reset_coordination"
+```
+
+**If any tool fails to load:** Report error and STOP.
+
+**Self-healing:** If MCP tool call fails with "unknown tool" later (e.g. after context compaction), re-run ToolSearch for that tool and retry once.
+
+**CRITICAL: NEVER use `gh` CLI via Bash for PR operations. ALL PR interactions MUST go through MCP tools (`mcp__pr__*`). Bash is ONLY for: `git remote get-url origin`, build commands (`npm run build`), test commands (`npm test`).**
+
+### Step 0.5: RESOLVE PARAMETERS & MULTI-PR LOOP
 
 ```bash
 git remote get-url origin
@@ -185,21 +206,36 @@ Triggers configured agents (coderabbit, gemini, codex, copilot, sourcery, qodo).
 
 **-> IMMEDIATELY proceed to Step 5**
 
-### Step 5: POLL & WAIT
+### Step 5: POLL & WAIT FOR AGENTS
+
+**Two-phase polling: first wait for agents to finish, then check for unresolved comments.**
+
+**Phase A: Wait for agents to complete re-review (max 20 iterations)**
+
+Each iteration:
+```
+pr_get_work_status {}
+```
+Check `pendingAgents` array:
+- `pendingAgents.length > 0` → agents still reviewing, wait 30s, poll again
+- `pendingAgents.length === 0` → all agents done, proceed to Phase B
+
+**Phase B: Check for new comments and convergence**
 ```
 pr_poll_updates { owner, repo, pr, include: ["comments", "status"] }
 ```
 
-Check convergence (max 20 iterations to prevent infinite loops):
-- `hasUpdates: true` with new comments -> wait 30s, poll again (agents still reviewing)
-- `hasUpdates: false` and `checkStatus.state === "pending"` -> wait 30s, poll again
-- `hasUpdates: false` and checks stable -> Get summary:
-  ```
-  pr_summary { owner, repo, pr }
-  ```
-  - If `unresolved > 0` -> proceed to Step 6
-  - If `unresolved === 0` -> proceed to Step 8
-- After 20 poll iterations -> force proceed to Step 6 or 8 based on current state
+Decision:
+- `hasUpdates: true` with new comments → agents posted new reviews, get summary
+- `hasUpdates: false` and `checkStatus.state === "pending"` → CI still running, wait 30s, re-poll
+- `hasUpdates: false` and checks stable → get summary
+
+```
+pr_summary { owner, repo, pr }
+```
+- If `unresolved > 0` → proceed to Step 6
+- If `unresolved === 0` → proceed to Step 8
+- After 20 total iterations → force proceed to Step 6 or 8 based on current state
 
 **-> IMMEDIATELY proceed based on condition**
 
@@ -334,11 +370,22 @@ Poll every 30s until all partitions complete:
 - Caused by review changes -> fix it
 - Pre-existing -> note in report, continue
 
-**Re-review cycle:**
-- If new AI comments posted during fixes -> Return to Step 5 (max 3 re-review cycles)
-- After 3 cycles OR no new comments -> Proceed to Step 9
+**Re-review cycle (MANDATORY after workers push code):**
 
-**-> Return to Step 5 (poll for re-review) OR proceed to Step 9**
+After build passes, check if agents need to re-review the pushed changes:
+```
+pr_get_work_status {}
+```
+- If `pendingAgents.length > 0` → agents are re-reviewing pushed changes → **Return to Step 5** (wait for them)
+- If `pendingAgents.length === 0` → agents have finished, check for new comments:
+  ```
+  pr_summary { owner, repo, pr }
+  ```
+  - If `unresolved > 0` → new comments from re-review → **Return to Step 6** (spawn workers)
+  - If `unresolved === 0` → all clear → **Proceed to Step 9**
+- Max 3 re-review cycles total, then force proceed to Step 9
+
+**-> Return to Step 5 (wait for re-review) OR Step 6 (new comments) OR proceed to Step 9**
 
 ### Step 9: COMPLETION
 
@@ -359,19 +406,19 @@ PR Review Complete. Build and tests passing. Ready for human review.
 
 **EXIT condition (success):**
 ```
-allAgentsReady === true AND unresolved === 0 AND build passes AND tests pass
+pendingAgents.length === 0 AND unresolved === 0 AND build passes AND tests pass
 ```
 
-ALL must be true simultaneously.
+ALL must be true simultaneously. Use `pr_get_work_status` to check `pendingAgents` and `isFullyComplete`.
 
-| Condition | Action |
-|-----------|--------|
-| `allAgentsReady: false` | Wait - agents still reviewing |
-| `allAgentsReady: true, unresolved > 0` | Spawn workers (Step 6) |
-| `allAgentsReady: true, unresolved === 0` | Build & Test -> Completion |
-| `pause-ai-review` label | **STOP** - User requested |
-| PR closed/merged | **STOP** - External action |
-| Build fails | Fix errors, do NOT proceed |
+| Condition | How to check | Action |
+|-----------|-------------|--------|
+| `pendingAgents.length > 0` | `pr_get_work_status {}` | Wait 30s - agents still reviewing |
+| `pendingAgents.length === 0, unresolved > 0` | `pr_summary {}` | Spawn workers (Step 6) |
+| `pendingAgents.length === 0, unresolved === 0` | Both tools | Build & Test → Completion |
+| `pause-ai-review` label | `pr_labels { action: "get" }` | **STOP** - User requested |
+| PR closed/merged | Poll response | **STOP** - External action |
+| Build fails | Build output | Fix errors, do NOT proceed |
 
 ---
 
@@ -455,6 +502,14 @@ X Edit - workers only
 X Write - workers only
 X Grep - workers only
 
+GH CLI PROHIBITION (CRITICAL):
+X `gh pr view` - use mcp__pr__pr_summary
+X `gh pr checks` - use mcp__pr__pr_poll_updates
+X `gh pr comment` - use MCP tools
+X `gh api` - use MCP tools
+X ANY `gh` command for PR operations - ALL PR interactions via mcp__pr__* tools
+  Bash is ONLY for: git remote, npm run build, npm test
+
 WORKFLOW VIOLATIONS:
 X Processing comments yourself (spawn workers!)
 X Running single-threaded (must spawn parallel workers)
@@ -463,9 +518,13 @@ X Skipping Step 6 when unresolved > 0
 X Not using model="sonnet" for workers
 X Asking user "should I start?"
 X Presenting summary and waiting for confirmation
+X Exiting while pendingAgents.length > 0 (agents still reviewing)
+X Skipping MCP bootstrap (Step 0)
 ```
 
 **If you catch yourself using pr_list/pr_get/pr_resolve/Read/Edit — you are doing the WORKER's job. STOP and spawn workers instead.**
+
+**If you catch yourself using `gh` CLI via Bash — STOP. Load MCP tools via ToolSearch and use them instead.**
 
 ---
 
