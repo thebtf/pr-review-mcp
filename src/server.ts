@@ -376,6 +376,11 @@ export class PRReviewMCPServer {
                   type: 'array',
                   items: { type: 'string', enum: ['comments', 'reviews', 'commits', 'status', 'agents'] },
                   description: 'Update types to include (default: all except agents). Use "agents" to get AI reviewer completion status.'
+                },
+                compact: {
+                  type: 'boolean',
+                  description: 'Return comment summary instead of full list (default: true)',
+                  default: true
                 }
               },
               required: ['owner', 'repo', 'pr']
