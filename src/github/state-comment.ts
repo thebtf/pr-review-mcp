@@ -96,7 +96,15 @@ function parseStateFromBody(body: string): PersistentState | null {
       return null;
     }
 
-    return JSON.parse(jsonMatch[1].trim()) as PersistentState;
+    const parsed = JSON.parse(jsonMatch[1].trim());
+    if (typeof parsed !== 'object' || parsed === null || typeof parsed.version !== 'number') {
+      return null;
+    }
+    if (parsed.version > STATE_VERSION) {
+      logger.warning('[state-comment] State version newer than supported', { found: parsed.version, supported: STATE_VERSION });
+      return null;
+    }
+    return parsed as PersistentState;
   } catch (error) {
     logger.warning('[state-comment] Failed to parse state from body', error);
     return null;

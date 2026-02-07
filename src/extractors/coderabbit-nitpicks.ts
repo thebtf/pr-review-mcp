@@ -67,7 +67,8 @@ export interface NitpickComment {
  * Body is intentionally excluded: LLM-generated bodies vary between passes.
  */
 function generateCommentId(prefix: string, file: string, lineStart: string | number, title: string): string {
-  const contentHash = createHash('md5').update(`${file}:${lineStart}:${title}`).digest('hex').slice(0, 8);
+  const normalizedTitle = title.trim().toLowerCase();
+  const contentHash = createHash('md5').update(`${file}:${lineStart}:${normalizedTitle}`).digest('hex').slice(0, 8);
   return `${prefix}-${contentHash}-${lineStart}`;
 }
 

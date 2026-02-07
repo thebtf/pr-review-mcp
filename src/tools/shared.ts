@@ -62,12 +62,13 @@ async function fetchCodeRabbitNitpicks(
 
     for (const review of coderabbitReviews) {
       const body = review.body ?? '';
-      allNitpicks = parseNitpicksFromReviewBody(body);
-      allOutsideDiff = parseOutsideDiffComments(body);
-
       const hasNitpickSection = /Nitpick comments/i.test(body);
       const hasOutsideDiffSection = /Outside diff range comments/i.test(body);
-      if (hasNitpickSection || hasOutsideDiffSection) break;
+      if (!hasNitpickSection && !hasOutsideDiffSection) continue;
+
+      allNitpicks = parseNitpicksFromReviewBody(body);
+      allOutsideDiff = parseOutsideDiffComments(body);
+      break;
     }
 
     // Convert to ProcessedComment format

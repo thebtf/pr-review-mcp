@@ -22,9 +22,9 @@ console.log(`PR: ${owner}/${repo}#${pr}\n`);
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+async function await test(name, fn) {
   try {
-    fn();
+    await fn();
     console.log(`✅ ${name}`);
     passed++;
   } catch (e) {
@@ -82,21 +82,21 @@ In @src/file2.ts:99
 </details>
 `;
 
-test('detectMultiIssue returns false for single-issue', () => {
+await test('detectMultiIssue returns false for single-issue', () => {
   assert(detectMultiIssue(singleIssueBody) === false, 'Should be false');
 });
 
-test('detectMultiIssue returns true for multi-issue', () => {
+await test('detectMultiIssue returns true for multi-issue', () => {
   assert(detectMultiIssue(multiIssueBody) === true, 'Should be true');
 });
 
-test('generateChildId is deterministic', () => {
+await test('generateChildId is deterministic', () => {
   const id1 = generateChildId('parent-123', 'issue block content');
   const id2 = generateChildId('parent-123', 'issue block content');
   assert(id1 === id2, `IDs should match: ${id1} vs ${id2}`);
 });
 
-test('generateChildId differs for different content', () => {
+await test('generateChildId differs for different content', () => {
   const id1 = generateChildId('parent-123', 'content A');
   const id2 = generateChildId('parent-123', 'content B');
   assert(id1 !== id2, 'IDs should differ');
@@ -128,18 +128,18 @@ const mockParentComment = {
   replies: []
 };
 
-test('splitMultiIssue creates child comments', () => {
+await test('splitMultiIssue creates child comments', () => {
   const children = splitMultiIssue(mockParentComment, multiIssueBody);
   assert(children.length === 2, `Expected 2 children, got ${children.length}`);
 });
 
-test('splitMultiIssue sets parentId on children', () => {
+await test('splitMultiIssue sets parentId on children', () => {
   const children = splitMultiIssue(mockParentComment, multiIssueBody);
   assert(children[0].parentId === 'PRRC_test123', 'Child should have parentId');
   assert(children[1].parentId === 'PRRC_test123', 'Child should have parentId');
 });
 
-test('splitMultiIssue generates unique child IDs', () => {
+await test('splitMultiIssue generates unique child IDs', () => {
   const children = splitMultiIssue(mockParentComment, multiIssueBody);
   assert(children[0].id !== children[1].id, 'Child IDs should be unique');
 });
@@ -153,7 +153,7 @@ console.log('\n--- 3. State Comment (GitHub API) ---');
 const stateModule = await import('../dist/github/state-comment.js');
 const { loadState, saveState } = stateModule;
 
-test('loadState returns empty state for new PR', async () => {
+await test('loadState returns empty state for new PR', async () => {
   // Use a test PR number that likely doesn't exist
   const state = await loadState(owner, repo, 99999);
   assert(state.version === 2, 'Should have version 2');
@@ -176,7 +176,7 @@ try {
 // Use gh CLI to fetch a known multi-issue comment
 const knownMultiIssueId = 'PRRC_kwDOQ2R7qs6f35ON'; // The one with 2 AI Prompts
 
-test('Real multi-issue comment has multiple AI Prompts', async () => {
+await test('Real multi-issue comment has multiple AI Prompts', async () => {
   try {
     // Fetch comment via REST API (works better on Windows)
     // Get the PR review comments and find our target
@@ -244,12 +244,12 @@ Just one line.
 </blockquote>
 </details>`;
 
-test('parseNitpicksFromReviewBody extracts all nitpicks', () => {
+await test('parseNitpicksFromReviewBody extracts all nitpicks', () => {
   const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   assert(nitpicks.length === 3, `Expected 3 nitpicks, got ${nitpicks.length}`);
 });
 
-test('parseNitpicksFromReviewBody preserves file associations', () => {
+await test('parseNitpicksFromReviewBody preserves file associations', () => {
   const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   const scriptNitpicks = nitpicks.filter(n => n.file === 'scripts/test.mjs');
   const srcNitpicks = nitpicks.filter(n => n.file === 'src/file.ts');
@@ -257,7 +257,7 @@ test('parseNitpicksFromReviewBody preserves file associations', () => {
   assert(srcNitpicks.length === 1, 'Should have 1 nitpick for src/file.ts');
 });
 
-test('parseNitpicksFromReviewBody parses line ranges', () => {
+await test('parseNitpicksFromReviewBody parses line ranges', () => {
   const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   const first = nitpicks.find(n => n.line === '22-49');
   const single = nitpicks.find(n => n.line === '100');
@@ -265,7 +265,7 @@ test('parseNitpicksFromReviewBody parses line ranges', () => {
   assert(single, 'Should parse single line 100');
 });
 
-test('parseNitpicksFromReviewBody generates stable ids for identical nitpicks', () => {
+await test('parseNitpicksFromReviewBody generates stable ids for identical nitpicks', () => {
   const nitpicksFirst = parseNitpicksFromReviewBody(nitpickReviewBody);
   const nitpicksSecond = parseNitpicksFromReviewBody(nitpickReviewBody);
 
@@ -287,7 +287,7 @@ test('parseNitpicksFromReviewBody generates stable ids for identical nitpicks', 
   });
 });
 
-test('parseNitpicksFromReviewBody changes id when title changes', () => {
+await test('parseNitpicksFromReviewBody changes id when title changes', () => {
   const originalNitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   assert(originalNitpicks.length > 0, 'Expected at least one nitpick');
 
@@ -312,7 +312,7 @@ test('parseNitpicksFromReviewBody changes id when title changes', () => {
   );
 });
 
-test('parseNitpicksFromReviewBody generates unique ids for nitpicks in the same review', () => {
+await test('parseNitpicksFromReviewBody generates unique ids for nitpicks in the same review', () => {
   const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
   const ids = nitpicks.map((n) => n.id);
 

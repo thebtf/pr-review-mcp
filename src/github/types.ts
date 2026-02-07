@@ -74,7 +74,7 @@ export interface UnresolveThreadData {
 
 export interface PRReview {
   id: string;
-  body: string;
+  body: string | null;
   state: string;
   author: Author | null;
 }
