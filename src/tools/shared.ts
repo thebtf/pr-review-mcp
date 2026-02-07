@@ -23,6 +23,7 @@ import {
 } from '../extractors/coderabbit-nitpicks.js';
 import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
 import { stateManager } from '../coordination/state.js';
+import { loadState } from '../github/state-comment.js';
 
 /**
  * Fetch CodeRabbit review bodies and extract nitpicks + outside diff range comments
@@ -60,9 +61,13 @@ async function fetchCodeRabbitNitpicks(
     let allOutsideDiff: ReturnType<typeof parseOutsideDiffComments> = [];
 
     for (const review of coderabbitReviews) {
-      allNitpicks = parseNitpicksFromReviewBody(review.body);
-      allOutsideDiff = parseOutsideDiffComments(review.body);
-      if (allNitpicks.length > 0 || allOutsideDiff.length > 0) break;
+      const body = review.body ?? '';
+      allNitpicks = parseNitpicksFromReviewBody(body);
+      allOutsideDiff = parseOutsideDiffComments(body);
+
+      const hasNitpickSection = /Nitpick comments/i.test(body);
+      const hasOutsideDiffSection = /Outside diff range comments/i.test(body);
+      if (hasNitpickSection || hasOutsideDiffSection) break;
     }
 
     // Convert to ProcessedComment format
@@ -211,9 +216,11 @@ export async function fetchAllThreads(
   // Merge nitpicks (only on first page fetch)
   const nitpicks = await nitpicksPromise;
   if (nitpicks.length > 0 && startCursor === null) {
+    // Load state once and check nitpicks locally to avoid N API calls
+    const state = await loadState(owner, repo, pr);
     const unresolvedNitpicks: ProcessedComment[] = [];
     for (const n of nitpicks) {
-      const isResolved = await stateManager.isNitpickResolved(n.id, { owner, repo, pr });
+      const isResolved = n.id in state.resolvedNitpicks;
       if (!isResolved) {
         unresolvedNitpicks.push(n);
       }

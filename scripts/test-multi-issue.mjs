@@ -265,6 +265,68 @@ test('parseNitpicksFromReviewBody parses line ranges', () => {
   assert(single, 'Should parse single line 100');
 });
 
+test('parseNitpicksFromReviewBody generates stable ids for identical nitpicks', () => {
+  const nitpicksFirst = parseNitpicksFromReviewBody(nitpickReviewBody);
+  const nitpicksSecond = parseNitpicksFromReviewBody(nitpickReviewBody);
+
+  assert(
+    nitpicksFirst.length === nitpicksSecond.length,
+    `Expected same number of nitpicks, got ${nitpicksFirst.length} and ${nitpicksSecond.length}`,
+  );
+
+  nitpicksFirst.forEach((nitpick, index) => {
+    const corresponding = nitpicksSecond[index];
+
+    assert(nitpick.id, 'Nitpick from first parse should have an id');
+    assert(corresponding.id, 'Nitpick from second parse should have an id');
+
+    assert(
+      nitpick.id === corresponding.id,
+      `Expected stable id for nitpick at index ${index}, got ${nitpick.id} and ${corresponding.id}`,
+    );
+  });
+});
+
+test('parseNitpicksFromReviewBody changes id when title changes', () => {
+  const originalNitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
+  assert(originalNitpicks.length > 0, 'Expected at least one nitpick');
+
+  const baseNitpick = originalNitpicks[0];
+  assert(baseNitpick.title, 'Expected nitpick to have a title');
+
+  const updatedTitle = `${baseNitpick.title} (updated)`;
+  const modifiedReviewBody = nitpickReviewBody.replace(baseNitpick.title, updatedTitle);
+
+  const modifiedNitpicks = parseNitpicksFromReviewBody(modifiedReviewBody);
+  assert(modifiedNitpicks.length === originalNitpicks.length, 'Title change should not change nitpick count');
+
+  const modifiedFirstNitpick = modifiedNitpicks[0];
+  assert(
+    modifiedFirstNitpick.title === updatedTitle,
+    `Expected first nitpick to have updated title, got "${modifiedFirstNitpick.title}"`,
+  );
+
+  assert(
+    baseNitpick.id !== modifiedFirstNitpick.id,
+    'Changing only the title of a nitpick should produce a different id',
+  );
+});
+
+test('parseNitpicksFromReviewBody generates unique ids for nitpicks in the same review', () => {
+  const nitpicks = parseNitpicksFromReviewBody(nitpickReviewBody);
+  const ids = nitpicks.map((n) => n.id);
+
+  ids.forEach((id, index) => {
+    assert(id, `Nitpick at index ${index} should have an id`);
+  });
+
+  const uniqueIds = new Set(ids);
+  assert(
+    uniqueIds.size === ids.length,
+    `Expected all nitpick ids in a single review to be unique, got ${ids.length} nitpicks and ${uniqueIds.size} unique ids`,
+  );
+});
+
 // ============================================================================
 // Summary
 // ============================================================================
