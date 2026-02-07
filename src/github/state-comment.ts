@@ -2,7 +2,7 @@
  * GitHub State Comment - Persistent state storage in PR comments
  *
  * Uses hidden HTML comments as markers to find/update state.
- * Format: <!-- pr-review-mcp-state:v1 --> ... <!-- /pr-review-mcp-state -->
+ * Format: <!-- pr-review-mcp-state:v2 --> ... <!-- /pr-review-mcp-state -->
  */
 
 import { getOctokit, getGraphQL } from './octokit.js';
@@ -14,9 +14,9 @@ import type { ParentChildEntry } from '../coordination/types.js';
 // Constants
 // ============================================================================
 
-const STATE_MARKER_START = '<!-- pr-review-mcp-state:v1 -->';
+const STATE_MARKER_START = '<!-- pr-review-mcp-state:v2 -->';
 const STATE_MARKER_END = '<!-- /pr-review-mcp-state -->';
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 // ============================================================================
 // Types
@@ -96,7 +96,15 @@ function parseStateFromBody(body: string): PersistentState | null {
       return null;
     }
 
-    return JSON.parse(jsonMatch[1].trim()) as PersistentState;
+    const parsed = JSON.parse(jsonMatch[1].trim());
+    if (typeof parsed !== 'object' || parsed === null || typeof parsed.version !== 'number') {
+      return null;
+    }
+    if (parsed.version > STATE_VERSION) {
+      logger.warning('[state-comment] State version newer than supported', { found: parsed.version, supported: STATE_VERSION });
+      return null;
+    }
+    return parsed as PersistentState;
   } catch (error) {
     logger.warning('[state-comment] Failed to parse state from body', error);
     return null;

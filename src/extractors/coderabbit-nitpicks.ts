@@ -60,24 +60,29 @@ export interface NitpickComment {
 }
 
 /**
- * Generate a consistent ID for a nitpick or outside-diff comment
+ * Generate a content-based ID for a nitpick or outside-diff comment.
+ * Uses file:lineStart:title as fingerprint — NOT reviewId.
+ * This deduplicates identical comments across multiple CodeRabbit review passes,
+ * since the same nitpick re-appears with a different reviewId on each push.
+ * Body is intentionally excluded: LLM-generated bodies vary between passes.
  */
-function generateCommentId(prefix: string, reviewId: string, file: string, lineStart: string | number): string {
-  const fileHash = createHash('md5').update(file).digest('hex').slice(0, 8);
-  return `${prefix}-${reviewId}-${fileHash}-${lineStart}`;
+function generateCommentId(prefix: string, file: string, lineStart: string | number, title: string): string {
+  const normalizedTitle = title.trim().toLowerCase();
+  const contentHash = createHash('md5').update(`${file}:${lineStart}:${normalizedTitle}`).digest('hex').slice(0, 8);
+  return `${prefix}-${contentHash}-${lineStart}`;
 }
 
 /**
- * Generate a consistent ID for a nitpick
+ * Generate a content-based ID for a nitpick
  */
-function generateNitpickId(reviewId: string, file: string, lineStart: string | number): string {
-  return generateCommentId('coderabbit-nitpick', reviewId, file, lineStart);
+function generateNitpickId(file: string, lineStart: string | number, title: string): string {
+  return generateCommentId('coderabbit-nitpick', file, lineStart, title);
 }
 
 /**
  * Parse nitpick comments from CodeRabbit review body
  */
-export function parseNitpicksFromReviewBody(reviewId: string, body: string): NitpickComment[] {
+export function parseNitpicksFromReviewBody(body: string): NitpickComment[] {
   const nitpicks: NitpickComment[] = [];
 
   if (!body) return [];
@@ -153,7 +158,7 @@ export function parseNitpicksFromReviewBody(reviewId: string, body: string): Nit
       // 5. Create the NitpickComment object
       // Use the start line for the ID to ensure uniqueness per file+review
       const lineStart = start.line.split('-')[0];
-      const id = generateNitpickId(reviewId, file, lineStart);
+      const id = generateNitpickId(file, lineStart, start.title);
       
       nitpicks.push({
         id,
@@ -199,7 +204,7 @@ export interface OutsideDiffComment {
  * These are comments on code lines that weren't changed in the PR,
  * so GitHub can't display them as inline comments.
  */
-export function parseOutsideDiffComments(reviewId: string, body: string): OutsideDiffComment[] {
+export function parseOutsideDiffComments(body: string): OutsideDiffComment[] {
   const comments: OutsideDiffComment[] = [];
 
   if (!body) return [];
@@ -291,7 +296,7 @@ export function parseOutsideDiffComments(reviewId: string, body: string): Outsid
 
       // 5. Create the OutsideDiffComment object
       const lineStart = start.line.split('-')[0];
-      const id = generateCommentId('coderabbit-outside-diff', reviewId, file, lineStart);
+      const id = generateCommentId('coderabbit-outside-diff', file, lineStart, start.title);
 
       comments.push({
         id,

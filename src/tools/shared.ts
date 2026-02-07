@@ -23,6 +23,7 @@ import {
 } from '../extractors/coderabbit-nitpicks.js';
 import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
 import { stateManager } from '../coordination/state.js';
+import { loadState } from '../github/state-comment.js';
 
 /**
  * Fetch CodeRabbit review bodies and extract nitpicks + outside diff range comments
@@ -42,20 +43,33 @@ async function fetchCodeRabbitNitpicks(
 
     const reviews = data?.repository?.pullRequest?.reviews?.nodes || [];
 
-    // Filter for CodeRabbit reviews only
-    const coderabbitReviews = reviews.filter(r =>
-      r.author?.login === 'coderabbitai' || r.author?.login === 'coderabbit[bot]'
-    );
+    // Filter for CodeRabbit reviews only, newest first
+    const coderabbitReviews = reviews
+      .filter(r => r.author?.login === 'coderabbitai' || r.author?.login === 'coderabbit[bot]')
+      .reverse(); // GraphQL returns oldest first; reverse to get newest first
 
-    // Extract nitpicks from each review body
-    const allNitpicks = coderabbitReviews.flatMap(review =>
-      parseNitpicksFromReviewBody(review.id, review.body)
-    );
+    if (coderabbitReviews.length === 0) return [];
 
-    // Extract outside diff range comments from each review body
-    const allOutsideDiff = coderabbitReviews.flatMap(review =>
-      parseOutsideDiffComments(review.id, review.body)
-    );
+    // Parse only the latest review (belt-and-suspenders with content-based dedup).
+    // CodeRabbit re-generates the full nitpick/outside-diff sections on each push,
+    // so older reviews contain stale duplicates.
+    // Fallback: if latest review parses to zero, try previous reviews.
+    // Note: Both nitpick and outside-diff sections are always present together in the
+    // same review body — CodeRabbit regenerates both on each pass. The `||` below is
+    // safe: finding either section means this is the active review with current data.
+    let allNitpicks: ReturnType<typeof parseNitpicksFromReviewBody> = [];
+    let allOutsideDiff: ReturnType<typeof parseOutsideDiffComments> = [];
+
+    for (const review of coderabbitReviews) {
+      const body = review.body ?? '';
+      const hasNitpickSection = /Nitpick comments/i.test(body);
+      const hasOutsideDiffSection = /Outside diff range comments/i.test(body);
+      if (!hasNitpickSection && !hasOutsideDiffSection) continue;
+
+      allNitpicks = parseNitpicksFromReviewBody(body);
+      allOutsideDiff = parseOutsideDiffComments(body);
+      break;
+    }
 
     // Convert to ProcessedComment format
     const initialComments = [
@@ -203,9 +217,11 @@ export async function fetchAllThreads(
   // Merge nitpicks (only on first page fetch)
   const nitpicks = await nitpicksPromise;
   if (nitpicks.length > 0 && startCursor === null) {
+    // Load state once and check nitpicks locally to avoid N API calls
+    const state = await loadState(owner, repo, pr);
     const unresolvedNitpicks: ProcessedComment[] = [];
     for (const n of nitpicks) {
-      const isResolved = await stateManager.isNitpickResolved(n.id);
+      const isResolved = n.id in state.resolvedNitpicks;
       if (!isResolved) {
         unresolvedNitpicks.push(n);
       }
