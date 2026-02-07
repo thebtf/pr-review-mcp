@@ -83,12 +83,15 @@ export async function generateSetupPrompt(
   // Parse owner/repo
   let owner: string | undefined;
   let repo: string | undefined;
+  let repoParseError: string | undefined;
 
   if (args.repo) {
     const parts = args.repo.split('/');
-    if (parts.length === 2) {
+    if (parts.length === 2 && parts[0] && parts[1]) {
       owner = parts[0];
       repo = parts[1];
+    } else {
+      repoParseError = `Invalid repo format: "${args.repo}". Expected format: owner/repo`;
     }
   }
 
@@ -135,7 +138,7 @@ Failed to check \`.github/pr-review.json\` in \`${owner}/${repo}\`: ${error}
   // Need to infer repo
   const inferSection = (!owner || !repo) ? `
 ## Step 1: Identify Repository
-
+${repoParseError ? `> ⚠️ ${repoParseError}\n` : ''}
 Run this command to get the repository:
 \`\`\`bash
 git remote get-url origin
