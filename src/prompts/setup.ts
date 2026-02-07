@@ -9,13 +9,10 @@
  * - /pr:setup owner/repo     → Setup for specific repo
  */
 
-import { GitHubClient } from '../github/client.js';
 import { getOctokit } from '../github/octokit.js';
 import {
   INVOKABLE_AGENTS,
-  getDefaultAgents,
-  getEnvConfig,
-  type InvokableAgentId
+  getEnvConfig
 } from '../agents/registry.js';
 
 // ============================================================================
@@ -23,7 +20,7 @@ import {
 // ============================================================================
 
 export interface SetupPromptArgs {
-  /** Repository in "owner/repo" format, or just owner */
+  /** Repository in "owner/repo" format */
   repo?: string;
 }
 
@@ -59,10 +56,20 @@ async function readRepoConfig(
     }
 
     const content = Buffer.from(data.content, 'base64').toString('utf-8');
-    const config: RepoConfig = JSON.parse(content);
-    return { exists: true, config };
-  } catch {
-    return { exists: false };
+    try {
+      const config: RepoConfig = JSON.parse(content);
+      return { exists: true, config };
+    } catch (parseError) {
+      return { exists: true, error: 'Invalid JSON in config file' };
+    }
+  } catch (error) {
+    // A 404 is expected if the file doesn't exist. Other errors (e.g., auth) are not.
+    if (error && typeof error === 'object' && 'status' in error && (error as { status: number }).status === 404) {
+      return { exists: false };
+    }
+    // Log unexpected errors for debugging but still return exists: false to avoid breaking the prompt
+    console.error(`[readRepoConfig] Unexpected error fetching config for ${owner}/${repo}:`, error);
+    return { exists: false, error: 'Failed to fetch config' };
   }
 }
 
@@ -71,8 +78,7 @@ async function readRepoConfig(
 // ============================================================================
 
 export async function generateSetupPrompt(
-  args: SetupPromptArgs,
-  client: GitHubClient
+  args: SetupPromptArgs
 ): Promise<string> {
   // Parse owner/repo
   let owner: string | undefined;
@@ -98,7 +104,7 @@ export async function generateSetupPrompt(
   // Repo config (if we have owner/repo)
   let repoConfigSection = '';
   if (owner && repo) {
-    const { exists, config } = await readRepoConfig(owner, repo);
+    const { exists, config, error } = await readRepoConfig(owner, repo);
     if (exists && config) {
       const repoAgents = config.invoke?.agents?.join(', ') || 'not specified';
       repoConfigSection = `
@@ -107,6 +113,16 @@ export async function generateSetupPrompt(
 ${JSON.stringify(config, null, 2)}
 \`\`\`
 - Agents: ${repoAgents}
+`;
+    } else if (exists && error) {
+      repoConfigSection = `
+### Repo Config: ERROR
+\`.github/pr-review.json\` exists in \`${owner}/${repo}\` but could not be read: ${error}
+`;
+    } else if (error) {
+      repoConfigSection = `
+### Repo Config: ACCESS ERROR
+Failed to check \`.github/pr-review.json\` in \`${owner}/${repo}\`: ${error}
 `;
     } else {
       repoConfigSection = `

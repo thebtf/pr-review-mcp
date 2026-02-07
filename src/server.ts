@@ -154,7 +154,7 @@ export class PRReviewMCPServer {
           repo: args?.repo as string | undefined
         };
 
-        const promptText = await generateSetupPrompt(setupArgs, this.githubClient);
+        const promptText = await generateSetupPrompt(setupArgs);
 
         return {
           messages: [
@@ -327,11 +327,7 @@ export class PRReviewMCPServer {
           },
           {
             name: 'pr_invoke',
-            description: 'Invoke AI code review agents on a PR. ' +
-              'When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, ' +
-              '(2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). ' +
-              'Use pr_setup prompt to configure per-repo agents. ' +
-              'Smart detection skips agents that already reviewed (use force to override).',
+            description: `Invoke AI code review agents on a PR. When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, (2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). Use pr:setup prompt to configure per-repo agents. Smart detection skips agents that already reviewed (use force to override).`,
             inputSchema: {
               type: 'object',
               properties: {
