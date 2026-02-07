@@ -21,7 +21,8 @@ export const PollInputSchema = z.object({
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive'),
   since: z.string().datetime().optional(),
-  include: z.array(z.enum(['comments', 'reviews', 'commits', 'status', 'agents'])).optional()
+  include: z.array(z.enum(['comments', 'reviews', 'commits', 'status', 'agents'])).optional(),
+  compact: z.boolean().optional().default(true)
 });
 
 export type PollInput = z.infer<typeof PollInputSchema>;
@@ -55,12 +56,21 @@ export interface AgentsStatus {
   agents: AgentStatus[];
 }
 
+export interface CommentsSummary {
+  total: number;
+  unresolved: number;
+  new: number;
+  bySeverity: Record<string, number>;
+  bySource: Record<string, number>;
+}
+
 export interface PollOutput {
   hasUpdates: boolean;
   cursor: string; // ISO timestamp for next poll
   since: string | null; // The timestamp we polled from
   updates: {
-    newComments: ListComment[];
+    newComments?: ListComment[];
+    commentsSummary?: CommentsSummary;
     resolvedThreads: string[];
     newCommits: CommitInfo[];
     checkStatus: {
@@ -319,7 +329,7 @@ export async function prPollUpdates(
   client: GitHubClient
 ): Promise<PollOutput> {
   const validated = PollInputSchema.parse(input);
-  const { owner, repo, pr, since, include } = validated;
+  const { owner, repo, pr, since, include, compact } = validated;
 
   // Default: include all update types except agents
   const includeTypes = include || ['comments', 'reviews', 'commits', 'status'];
@@ -361,17 +371,48 @@ export async function prPollUpdates(
   ]);
 
   // Filter comments by timestamp if since is provided
-  let newComments: ListComment[] = [];
+  let newComments: ListComment[] | undefined;
+  let commentsSummary: CommentsSummary | undefined;
+  let newCommentCount = 0;
+
   if (includeTypes.includes('comments')) {
     const sinceDate = since ? new Date(since) : null;
 
-    newComments = commentsResult.comments
-      .filter(c => {
-        if (!sinceDate) return true;
-        const commentDate = c.createdAt ? new Date(c.createdAt) : null;
-        return commentDate && commentDate > sinceDate;
-      })
-      .map(c => ({
+    const filteredComments = commentsResult.comments.filter(c => {
+      if (!sinceDate) return true;
+      const commentDate = c.createdAt ? new Date(c.createdAt) : null;
+      return commentDate && commentDate > sinceDate;
+    });
+
+    newCommentCount = filteredComments.length;
+
+    if (compact) {
+      // Compact mode: return summary instead of full comment list
+      const allComments = commentsResult.comments;
+      let unresolved = 0;
+      const bySeverity: Record<string, number> = {};
+      const bySource: Record<string, number> = {};
+
+      for (const c of allComments) {
+        if (!c.resolved) {
+          unresolved++;
+          const sev = c.severity ?? 'unknown';
+          bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
+          const src = c.source ?? 'unknown';
+          bySource[src] = (bySource[src] ?? 0) + 1;
+        }
+      }
+
+      commentsSummary = {
+        total: allComments.length,
+        unresolved,
+        new: newCommentCount,
+        bySeverity,
+        bySource
+      };
+    } else {
+      // Full mode: return complete comment list (legacy behavior)
+      newComments = filteredComments.map(c => ({
         id: c.id,
         threadId: c.threadId,
         file: c.file,
@@ -382,13 +423,14 @@ export async function prPollUpdates(
         resolved: c.resolved,
         hasAiPrompt: c.aiPrompt !== null
       }));
+    }
   }
 
   // Determine if there are updates including agent activity
   const hasAgentUpdates = agentsStatus?.agents?.some(a => a.ready) ?? false;
 
   const hasUpdates =
-    newComments.length > 0 ||
+    newCommentCount > 0 ||
     commits.length > 0 ||
     resolvedThreads.length > 0 ||
     hasAgentUpdates;
@@ -398,7 +440,12 @@ export async function prPollUpdates(
     cursor: now,
     since: since || null,
     updates: {
-      newComments,
+      ...(includeTypes.includes('comments')
+        ? compact
+          ? { commentsSummary }
+          : { newComments: newComments ?? [] }
+        : {}
+      ),
       resolvedThreads,
       newCommits: commits,
       checkStatus,
