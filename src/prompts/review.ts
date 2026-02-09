@@ -13,10 +13,11 @@
 
 import { GitHubClient } from '../github/client.js';
 import { prSummary } from '../tools/summary.js';
-import { prListPRs } from '../tools/list-prs.js';
+import { prListPRs, type ListPRsOutput } from '../tools/list-prs.js';
 import { prGetWorkStatus } from '../tools/coordination.js';
 import { getEnvConfig, type InvokableAgentId, type ReviewMode } from '../agents/registry.js';
 import { logger } from '../logging.js';
+import { detectCurrentBranch, detectGitRepo, isDefaultBranch } from '../git/detect.js';
 
 // ============================================================================
 // Types
@@ -111,6 +112,14 @@ interface PromptContext {
   inferRepo?: boolean;
   /** Requested PR number when only number provided */
   requestedPR?: number;
+  /** Branch name if PR was auto-detected from current git branch */
+  autoDetectedBranch?: string;
+  /** Set when user requests a PR different from the branch's PR */
+  branchMismatch?: {
+    branch: string;
+    branchPR: number;
+    requestedPR: number;
+  };
 }
 
 // ============================================================================
@@ -424,6 +433,11 @@ export async function generateReviewPrompt(
 ): Promise<string> {
   const context = await buildContext(args, client);
 
+  // Branch protection: refuse if PR mismatch detected
+  if (context.branchMismatch) {
+    return generateBranchMismatchPrompt(context);
+  }
+
   // Need to infer repo from git
   if (context.inferRepo) {
     return generateInferRepoPrompt(context);
@@ -488,32 +502,116 @@ async function buildContext(
   // Normalize args (parse URL if provided)
   const normalized = normalizeArgs(args);
 
-  // If we need to infer owner/repo (no args or just PR number)
+  const detectedRepo = detectGitRepo();
   if (!normalized.owner || !normalized.repo) {
-    return {
-      targets: [],
-      desiredWorkers,
-      envConfig,
-      inferRepo: true,
-      requestedPR: normalized.pr
-    };
+    if (detectedRepo) {
+      normalized.owner = detectedRepo.owner;
+      normalized.repo = detectedRepo.repo;
+      logger.info('Auto-detected repository from git remote', { owner: detectedRepo.owner, repo: detectedRepo.repo });
+    } else {
+      return {
+        targets: [],
+        desiredWorkers,
+        envConfig,
+        inferRepo: true,
+        requestedPR: normalized.pr
+      };
+    }
   }
 
-  // If specific PR provided (either directly or via URL)
+  const { owner, repo } = normalized as { owner: string; repo: string };
+  const sameRepo = !!detectedRepo && detectedRepo.owner === owner && detectedRepo.repo === repo;
+
+  // --- Branch protection (runs BEFORE explicit PR processing) ---
+  const branch = detectCurrentBranch();
+  let cachedPRs: ListPRsOutput | null = null;
+
+  if (branch && !isDefaultBranch(branch) && sameRepo) {
+    try {
+      // Fetch PRs with pagination support to ensure we find the branch PR
+      cachedPRs = await prListPRs({ owner, repo, state: 'OPEN', limit: 100 }, client);
+      const branchPR = cachedPRs.pullRequests.find(p => p.branch === branch);
+
+      if (branchPR) {
+        // GUARD: mismatch between branch PR and explicit request (same repo only)
+        if (normalized.pr !== undefined && normalized.pr !== branchPR.number) {
+          logger.warning('Branch protection: PR mismatch', {
+            branch, branchPR: branchPR.number, requestedPR: normalized.pr
+          });
+          return {
+            targets: [],
+            desiredWorkers,
+            envConfig,
+            branchMismatch: { branch, branchPR: branchPR.number, requestedPR: normalized.pr }
+          };
+        }
+
+        // Use branch's PR (auto-detected or same as explicitly requested)
+        logger.info('Auto-detected PR from branch', { branch, pr: branchPR.number });
+        try {
+          const [summary, workStatus] = await Promise.all([
+            prSummary({ owner, repo, pr: branchPR.number }, client),
+            prGetWorkStatus({}, client)
+          ]);
+
+          return {
+            targets: [{
+              owner, repo, pr: branchPR.number,
+              title: branchPR.title, unresolved: summary.unresolved
+            }],
+            currentSummary: {
+              total: summary.total,
+              resolved: summary.resolved,
+              unresolved: summary.unresolved,
+              bySeverity: summary.bySeverity
+            },
+            workStatus: {
+              isActive: workStatus.isActive,
+              runAge: workStatus.runAge ?? undefined
+            },
+            desiredWorkers,
+            envConfig,
+            autoDetectedBranch: branch
+          };
+        } catch (error) {
+          // Prefetch failed — return minimal context
+          logger.warning('Failed to pre-fetch context for auto-detected PR, returning minimal context', {
+            owner,
+            repo,
+            pr: branchPR.number,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          return {
+            targets: [{ owner, repo, pr: branchPR.number, title: branchPR.title, unresolved: branchPR.stats.reviewThreads }],
+            desiredWorkers,
+            envConfig,
+            autoDetectedBranch: branch
+          };
+        }
+      }
+      // No matching PR for this branch — fall through
+      logger.debug('No open PR found for branch, falling through', { branch });
+    } catch (error) {
+      // prListPRs failed — fail open, fall through
+      logger.warning('Failed to match branch to PR, falling through', {
+        branch,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  // --- Explicit PR (not caught by branch protection) ---
   if (normalized.pr) {
     try {
-      // Pre-fetch summary and work status in parallel
       const [summary, workStatus] = await Promise.all([
-        prSummary({ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }, client),
+        prSummary({ owner, repo, pr: normalized.pr }, client),
         prGetWorkStatus({}, client)
       ]);
 
       return {
         targets: [{
-          owner: normalized.owner,
-          repo: normalized.repo,
-          pr: normalized.pr,
-          unresolved: summary.unresolved
+          owner, repo,
+          pr: normalized.pr, unresolved: summary.unresolved
         }],
         currentSummary: {
           total: summary.total,
@@ -529,42 +627,31 @@ async function buildContext(
         envConfig
       };
     } catch (error) {
-      // If pre-fetch fails, log warning and return minimal context
       if (process.env.DEBUG) {
         console.error('[generateReviewPrompt] Pre-fetch failed:', error);
       }
       logger.warning('Failed to pre-fetch context for PR', {
-        owner: normalized.owner,
-        repo: normalized.repo,
-        pr: normalized.pr,
+        owner, repo, pr: normalized.pr,
         error: error instanceof Error ? error.message : String(error)
       });
       return {
-        targets: [{ owner: normalized.owner, repo: normalized.repo, pr: normalized.pr }],
+        targets: [{ owner, repo, pr: normalized.pr }],
         desiredWorkers,
         envConfig
       };
     }
   }
 
-  // If only owner/repo - get all open PRs
+  // --- Multi-PR mode (reuse cached PRs if available) ---
   try {
-    const prs = await prListPRs(
-      { owner: normalized.owner, repo: normalized.repo, state: 'OPEN', limit: 20 },
-      client
-    );
-
-    const { owner, repo } = normalized as { owner: string; repo: string };
+    const prs = cachedPRs ?? await prListPRs({ owner, repo, state: 'OPEN', limit: 20 }, client);
 
     const targets: PRTarget[] = prs.pullRequests.map(p => ({
-      owner,
-      repo,
-      pr: p.number,
-      title: p.title,
+      owner, repo,
+      pr: p.number, title: p.title,
       unresolved: p.stats.reviewThreads
     }));
 
-    // Filter to PRs with unresolved comments
     const withComments = targets.filter(t => (t.unresolved ?? 0) > 0);
 
     return {
@@ -574,12 +661,36 @@ async function buildContext(
     };
   } catch (error) {
     logger.warning('Failed to fetch open PRs for repository', {
-      owner: normalized.owner,
-      repo: normalized.repo,
+      owner, repo,
       error: error instanceof Error ? error.message : String(error)
     });
     return { targets: [], desiredWorkers, envConfig };
   }
+}
+
+/**
+ * Sanitize values before inserting into prompt to prevent prompt injection
+ */
+function sanitizePromptValue(value: string): string {
+  return value.replace(/[\n\r\t`"']/g, '').slice(0, 100).trim();
+}
+
+/**
+ * Generate refusal prompt when branch PR mismatches the requested PR
+ */
+function generateBranchMismatchPrompt(context: PromptContext): string {
+  const { branch, branchPR, requestedPR } = context.branchMismatch!;
+  const safeBranch = sanitizePromptValue(branch);
+  return `# Branch Protection: PR Mismatch
+
+You are on branch \`${safeBranch}\` which is tied to **PR #${branchPR}**.
+
+Cannot process **PR #${requestedPR}** — processing a different PR from a feature branch risks merge conflicts.
+
+**Options:**
+- \`/pr:review\` or \`/pr:review ${branchPR}\` — review PR #${branchPR} (your branch)
+- Switch to \`main\` to review other PRs
+- Switch to the branch for PR #${requestedPR} to review it`;
 }
 
 /**
@@ -640,7 +751,7 @@ To review a specific PR, provide the PR number: \`/pr:review 4\``;
  */
 function generateSinglePRPrompt(context: PromptContext): string {
   const target = context.targets[0];
-  const { currentSummary, workStatus, desiredWorkers, envConfig } = context;
+  const { currentSummary, workStatus, desiredWorkers, envConfig, autoDetectedBranch } = context;
 
   let statusLine = '';
   if (currentSummary) {
@@ -651,9 +762,13 @@ function generateSinglePRPrompt(context: PromptContext): string {
     ? `\n⚠️ Active run detected (age: ${Math.round((workStatus.runAge || 0) / 1000)}s) — check preflight!`
     : '';
 
+  const branchIndicator = autoDetectedBranch
+    ? ` (auto-detected from branch \`${sanitizePromptValue(autoDetectedBranch)}\`)`
+    : '';
+
   return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
-**Target:** ${target.owner}/${target.repo}#${target.pr}
+**Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
 **${statusLine}**${activeWarning}
 **Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
 
