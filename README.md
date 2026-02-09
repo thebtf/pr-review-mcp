@@ -112,45 +112,43 @@ The server provides two MCP prompts for guided workflows:
 
 ### Installation
 
-**Option 1: From GitHub (recommended)**
 ```bash
-git clone https://github.com/thebtf/pr-review-mcp.git
-cd pr-review-mcp
-npm install && npm run build
+npm install -g pr-review-mcp
 ```
 
-**Option 2: From npm**
+To update to the latest version:
 ```bash
-npx -y pr-review-mcp
-```
-
-### Configuration
-
-Set your GitHub token:
-```bash
-export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
+npm install -g pr-review-mcp@latest
 ```
 
 ### MCP Client Setup
 
-#### Claude Code (`~/.claude/settings.json`)
+Add to `~/.claude/settings.json` (Claude Code) or `claude_desktop_config.json` (Claude Desktop):
 
-**From npm (recommended):**
 ```json
 {
   "mcpServers": {
     "pr": {
-      "command": "npx",
-      "args": ["-y", "pr-review-mcp"],
+      "command": "pr-review-mcp",
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
       }
     }
   }
 }
 ```
 
-**From local clone:**
+The token is passed via the MCP config — no need to set environment variables globally.
+
+<details>
+<summary>Alternative: from local clone</summary>
+
+```bash
+git clone https://github.com/thebtf/pr-review-mcp.git
+cd pr-review-mcp
+npm install && npm run build
+```
+
 ```json
 {
   "mcpServers": {
@@ -158,16 +156,15 @@ export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
       "command": "node",
       "args": ["/path/to/pr-review-mcp/dist/index.js"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
       }
     }
   }
 }
 ```
 
-#### Claude Desktop (`claude_desktop_config.json`)
-
-Same format as above.
+To update: `git pull && npm install && npm run build`
+</details>
 
 ---
 
