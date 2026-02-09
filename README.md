@@ -28,6 +28,7 @@ This server solves the **"AI-on-AI" coordination problem**:
 - **🤖 Multi-Agent Orchestration**: Native support for CodeRabbit, Gemini, Copilot, Sourcery, Qodo, and Codex.
 - **🧠 Prompt Extraction**: Automatically parses the underlying prompt used by AI agents from comment metadata.
 - **⚡ Parallel Coordination**: Built-in specialized tools (`claim_work`, `report_progress`) for multi-worker setups, with hybrid Task UI monitoring for real-time progress visibility.
+- **🔒 Branch Protection**: Refuses to process a different PR when on a feature branch with an open PR, preventing merge conflicts in worktree setups.
 - **🛡️ Resilience**: Implements Circuit Breaker patterns and robust retry logic for GitHub API stability.
 - **🧹 Smart Parsing**:
     - **Nitpick Extraction**: Isolates minor issues from CodeRabbit summaries.
@@ -118,9 +119,9 @@ cd pr-review-mcp
 npm install && npm run build
 ```
 
-**Option 2: From npm** *(after publish)*
+**Option 2: From npm**
 ```bash
-npm install -g pr-review-mcp
+npx -y pr-review-mcp
 ```
 
 ### Configuration
@@ -132,37 +133,41 @@ export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
 
 ### MCP Client Setup
 
-Add to `claude_desktop_config.json`:
+#### Claude Code (`~/.claude/settings.json`)
+
+**From npm (recommended):**
+```json
+{
+  "mcpServers": {
+    "pr": {
+      "command": "npx",
+      "args": ["-y", "pr-review-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+      }
+    }
+  }
+}
+```
 
 **From local clone:**
 ```json
 {
   "mcpServers": {
-    "pr-review": {
+    "pr": {
       "command": "node",
       "args": ["/path/to/pr-review-mcp/dist/index.js"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
       }
     }
   }
 }
 ```
 
-**From npm** *(after publish)*:
-```json
-{
-  "mcpServers": {
-    "pr-review": {
-      "command": "npx",
-      "args": ["-y", "pr-review-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-      }
-    }
-  }
-}
-```
+#### Claude Desktop (`claude_desktop_config.json`)
+
+Same format as above.
 
 ---
 
