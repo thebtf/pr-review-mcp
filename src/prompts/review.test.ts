@@ -1,5 +1,9 @@
 /**
  * Tests for branch protection logic in buildContext / generateReviewPrompt
+ *
+ * TODO: Rewrite tests to use MCP protocol (NDJSON via server stdin) instead of direct imports.
+ * Current approach mocks module dependencies; should mock at MCP tool/handler level instead.
+ * See AGENTS.md for MCP testing guidelines.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -87,6 +91,8 @@ function makeListPRsOutput(prs: PRInfo[]): ListPRsOutput {
 beforeEach(() => {
   vi.resetAllMocks();
   mockIsDefault.mockReturnValue(false);
+  // Default: detectGitRepo returns matching repo (sameRepo = true for branch protection)
+  mockDetectRepo.mockReturnValue({ owner: 'owner', repo: 'repo' });
   mockWorkStatus.mockResolvedValue({ isActive: false, runAge: null } as any);
   mockSummary.mockResolvedValue({
     total: 5, resolved: 3, unresolved: 2, bySeverity: { medium: 2 },
@@ -97,7 +103,7 @@ beforeEach(() => {
 describe('branch protection: PR mismatch guard', () => {
   it('refuses when branch has PR and user requests different PR', async () => {
     mockDetectBranch.mockReturnValue('feat/X');
-    mockDetectRepo.mockReturnValue(null); // won't be called since owner/repo provided
+    // detectGitRepo returns same repo → sameRepo = true → branch protection active
     mockListPRs.mockResolvedValue(makeListPRsOutput([makePR({ number: 5, branch: 'feat/X' })]));
 
     const result = await generateReviewPrompt(

@@ -502,13 +502,12 @@ async function buildContext(
   // Normalize args (parse URL if provided)
   const normalized = normalizeArgs(args);
 
-  // If we need to infer owner/repo — try git detection first
+  const detectedRepo = detectGitRepo();
   if (!normalized.owner || !normalized.repo) {
-    const detected = detectGitRepo();
-    if (detected) {
-      normalized.owner = detected.owner;
-      normalized.repo = detected.repo;
-      logger.info('Auto-detected repository from git remote', { owner: detected.owner, repo: detected.repo });
+    if (detectedRepo) {
+      normalized.owner = detectedRepo.owner;
+      normalized.repo = detectedRepo.repo;
+      logger.info('Auto-detected repository from git remote', { owner: detectedRepo.owner, repo: detectedRepo.repo });
     } else {
       return {
         targets: [],
@@ -521,14 +520,16 @@ async function buildContext(
   }
 
   const { owner, repo } = normalized as { owner: string; repo: string };
+  const sameRepo = !!detectedRepo && detectedRepo.owner === owner && detectedRepo.repo === repo;
 
   // --- Branch protection (runs BEFORE explicit PR processing) ---
   const branch = detectCurrentBranch();
   let cachedPRs: ListPRsOutput | null = null;
 
-  if (branch && !isDefaultBranch(branch)) {
+  if (branch && !isDefaultBranch(branch) && sameRepo) {
     try {
-      cachedPRs = await prListPRs({ owner, repo, state: 'OPEN', limit: 20 }, client);
+      // Fetch PRs with pagination support to ensure we find the branch PR
+      cachedPRs = await prListPRs({ owner, repo, state: 'OPEN', limit: 100 }, client);
       const branchPR = cachedPRs.pullRequests.find(p => p.branch === branch);
 
       if (branchPR) {
@@ -572,8 +573,14 @@ async function buildContext(
             envConfig,
             autoDetectedBranch: branch
           };
-        } catch {
+        } catch (error) {
           // Prefetch failed — return minimal context
+          logger.warning('Failed to pre-fetch context for auto-detected PR, returning minimal context', {
+            owner,
+            repo,
+            pr: branchPR.number,
+            error: error instanceof Error ? error.message : String(error)
+          });
           return {
             targets: [{ owner, repo, pr: branchPR.number, title: branchPR.title, unresolved: branchPR.stats.reviewThreads }],
             desiredWorkers,
@@ -597,13 +604,13 @@ async function buildContext(
   if (normalized.pr) {
     try {
       const [summary, workStatus] = await Promise.all([
-        prSummary({ owner: normalized.owner!, repo: normalized.repo!, pr: normalized.pr }, client),
+        prSummary({ owner, repo, pr: normalized.pr }, client),
         prGetWorkStatus({}, client)
       ]);
 
       return {
         targets: [{
-          owner: normalized.owner!, repo: normalized.repo!,
+          owner, repo,
           pr: normalized.pr, unresolved: summary.unresolved
         }],
         currentSummary: {
@@ -624,11 +631,11 @@ async function buildContext(
         console.error('[generateReviewPrompt] Pre-fetch failed:', error);
       }
       logger.warning('Failed to pre-fetch context for PR', {
-        owner: normalized.owner, repo: normalized.repo, pr: normalized.pr,
+        owner, repo, pr: normalized.pr,
         error: error instanceof Error ? error.message : String(error)
       });
       return {
-        targets: [{ owner: normalized.owner!, repo: normalized.repo!, pr: normalized.pr }],
+        targets: [{ owner, repo, pr: normalized.pr }],
         desiredWorkers,
         envConfig
       };
@@ -662,13 +669,21 @@ async function buildContext(
 }
 
 /**
+ * Sanitize values before inserting into prompt to prevent prompt injection
+ */
+function sanitizePromptValue(value: string): string {
+  return value.replace(/[\n\r\t`"']/g, '').slice(0, 100).trim();
+}
+
+/**
  * Generate refusal prompt when branch PR mismatches the requested PR
  */
 function generateBranchMismatchPrompt(context: PromptContext): string {
   const { branch, branchPR, requestedPR } = context.branchMismatch!;
+  const safeBranch = sanitizePromptValue(branch);
   return `# Branch Protection: PR Mismatch
 
-You are on branch \`${branch}\` which is tied to **PR #${branchPR}**.
+You are on branch \`${safeBranch}\` which is tied to **PR #${branchPR}**.
 
 Cannot process **PR #${requestedPR}** — processing a different PR from a feature branch risks merge conflicts.
 
@@ -748,7 +763,7 @@ function generateSinglePRPrompt(context: PromptContext): string {
     : '';
 
   const branchIndicator = autoDetectedBranch
-    ? ` (auto-detected from branch \`${autoDetectedBranch}\`)`
+    ? ` (auto-detected from branch \`${sanitizePromptValue(autoDetectedBranch)}\`)`
     : '';
 
   return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
