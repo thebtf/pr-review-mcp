@@ -1,9 +1,5 @@
 /**
  * Tests for branch protection logic in buildContext / generateReviewPrompt
- *
- * TODO: Rewrite tests to use MCP protocol (NDJSON via server stdin) instead of direct imports.
- * Current approach mocks module dependencies; should mock at MCP tool/handler level instead.
- * See AGENTS.md for MCP testing guidelines.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
