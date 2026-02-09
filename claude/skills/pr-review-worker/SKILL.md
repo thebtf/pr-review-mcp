@@ -9,6 +9,8 @@ model: sonnet
 user-invocable: false
 disable-model-invocation: true
 allowed-tools:
+  - TaskUpdate
+  - TaskList
   - Bash
   - mcp__pr__pr_claim_work
   - mcp__pr__pr_list
@@ -87,10 +89,16 @@ Claim file partitions and resolve their review comments.
 **FIRST, verify you were spawned by orchestrator:**
 
 ```
-IF "spawned_by_orchestrator=true" is NOT in your prompt parameters:
-  -> HALT immediately
-  -> Report: "Worker must be spawned by pr-review orchestrator. Direct invocation not allowed."
-  -> EXIT
+1. Check: "spawned_by_orchestrator: true" is present in your prompt Parameters block
+2. Validate parameter block structure (all required fields present):
+   - agent_id: matches pattern worker-\d+ or worker-replacement-\d+
+   - owner: non-empty string, no newlines/backticks
+   - repo: non-empty string, no newlines/backticks
+   - pr: numeric value
+3. If ANY check fails:
+   -> HALT immediately
+   -> Report: "Worker must be spawned by pr-review orchestrator. Direct invocation not allowed."
+   -> EXIT
 ```
 
 This skill is NOT for direct user invocation. Only the pr-review orchestrator may spawn workers.
@@ -142,8 +150,17 @@ pr_claim_work {
 ```
 
 Response:
-- `status: "claimed"` -> proceed to Step 2
+- `status: "claimed"` -> update Task UI, then proceed to Step 2
 - `status: "no_work"` -> proceed to Step 4 (FINAL BUILD & TEST)
+
+**Task UI update (optional, non-blocking):** After `status: "claimed"`:
+```
+try:
+  tasks = TaskList()
+  match = tasks.find(t => t.subject === "PR #{pr}: {claimedFile}")
+  if match: TaskUpdate(match.id, status: "in_progress")
+catch: continue (Task UI failures are non-fatal)
+```
 
 **-> IMMEDIATELY proceed to Step 2 if claimed**
 
@@ -225,6 +242,15 @@ pr_report_progress {
   status: "done",
   result: { commentsProcessed: 4, commentsResolved: 3, errors: [] }
 }
+```
+
+**Task UI update (optional, non-blocking):** After `pr_report_progress`:
+```
+try:
+  tasks = TaskList()
+  match = tasks.find(t => t.subject === "PR #{pr}: {reportedFile}")
+  if match: TaskUpdate(match.id, status: "completed")
+catch: continue (Task UI failures are non-fatal)
 ```
 
 **-> IMMEDIATELY return to Step 1 (claim next partition)**
@@ -311,23 +337,31 @@ X Exiting with broken build
 ## Example Session
 
 ```
-0. MCPSearch "select:mcp__pr__pr_claim_work" -> tool loaded
-   MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
-   ... (load all required tools)
-1. pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
-2. pr_get { id: "t1" } -> { body: "Add null check", aiPrompt: "..." }
-3. mcp__serena__get_symbols_overview { relative_path: "src/App.tsx" }
-4. mcp__serena__find_symbol { name_path: "Component/method", include_body: true }
-5. mcp__serena__replace_symbol_body -> add null check
-6. pr_resolve { threadId: "t1" }
-7. pr_get { id: "t2" } -> ...
-8. ... fix and resolve ...
-9. pr_report_progress { file: "src/App.tsx", status: "done" }
+0.  MCPSearch "select:mcp__pr__pr_claim_work" -> tool loaded
+    MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
+    ... (load all required tools)
+1.  pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
+1a. TaskList -> find task "PR #42: src/App.tsx" -> taskId: "5"
+1b. TaskUpdate(taskId: "5", status: "in_progress")
+2.  pr_get { id: "t1" } -> { body: "Add null check", aiPrompt: "..." }
+3.  mcp__serena__get_symbols_overview { relative_path: "src/App.tsx" }
+4.  mcp__serena__find_symbol { name_path: "Component/method", include_body: true }
+5.  mcp__serena__replace_symbol_body -> add null check
+6.  pr_resolve { threadId: "t1" }
+7.  pr_get { id: "t2" } -> ...
+8.  ... fix and resolve ...
+9.  pr_report_progress { file: "src/App.tsx", status: "done" }
+9a. TaskList -> find task "PR #42: src/App.tsx" -> taskId: "5"
+9b. TaskUpdate(taskId: "5", status: "completed")
 10. pr_claim_work -> status: claimed, partition: { file: "src/utils.ts", ... }
+10a. TaskList -> find task "PR #42: src/utils.ts" -> taskId: "6"
+10b. TaskUpdate(taskId: "6", status: "in_progress")
 11. ... continue ...
-12. pr_claim_work -> status: no_work
-13. Detect project type (package.json / *.csproj / etc.)
-14. Run build command -> success
-15. Run test command -> success
-16. EXIT
+12. pr_report_progress { file: "src/utils.ts", status: "done" }
+12a. TaskUpdate(taskId: "6", status: "completed")
+13. pr_claim_work -> status: no_work
+14. Detect project type (package.json / *.csproj / etc.)
+15. Run build command -> success
+16. Run test command -> success
+17. EXIT
 ```

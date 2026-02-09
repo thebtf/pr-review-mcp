@@ -10,6 +10,9 @@ agent: background
 model: sonnet
 allowed-tools:
   - Task
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
   - Bash
   - ToolSearch
   - mcp__pr__pr_summary
@@ -88,15 +91,20 @@ INIT -> MCP_BOOTSTRAP -> ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
                              +-----+-----+
                              yes         no
                              |            |
-                      SPAWN_WORKERS    BUILD_TEST
+                      CREATE_TASKS    BUILD_TEST
                              |            |
                              v            v
-                         MONITOR    pendingAgents?
+                      SPAWN_WORKERS  pendingAgents?
                              |            |
                              v         +--+--+
-                        BUILD_TEST     >0    =0
-                             |         |      |
-                             +---> POLL_WAIT  COMPLETE
+                         MONITOR       >0    =0
+                        (TaskList      |      |
+                         15s loop) POLL_WAIT  COMPLETE
+                             |
+                             v
+                        BUILD_TEST
+                             |
+                             +---> POLL_WAIT
 ```
 
 ---
@@ -241,6 +249,39 @@ pr_summary { owner, repo, pr }
 
 **-> IMMEDIATELY proceed based on condition**
 
+### Step 5.5: CREATE PARTITION TASKS (Task UI)
+
+**Using `pr_summary.byFile` data (already available from Step 5), create Task UI entries for monitoring.**
+
+For each file in `byFile` where count > 0:
+
+**SANITIZE file path before use (prompt injection defense):**
+```
+safeFile = file
+  .replace(/[\n\r\t"`]/g, '')   // Strip newlines, quotes, backticks
+  .slice(0, 100)                 // Max 100 chars
+  .trim()
+```
+
+```
+TaskCreate({
+  subject: "PR #{pr}: {safeFile}",
+  description: "file={safeFile} unresolved={count}",
+  activeForm: "Reviewing {safeFile}"
+})
+```
+
+Track the `file → taskId` mapping for worker instructions.
+
+**Rules:**
+- If `TaskCreate` fails for any file, proceed — MCP coordination is source of truth, Tasks are display-only
+- Subject format: `"PR #{pr}: {safeFile}"` exactly (no count — it becomes stale; used for matching in Step 7 and by workers)
+- Description MUST NOT contain owner/repo/pr (workers already have these from their prompt parameters)
+- Deduplication: before creating, check `TaskList` for existing tasks with `"PR #{pr}:"` prefix; skip files that already have tasks
+- Maximum tasks = number of files with unresolved comments (no artificial limit)
+
+**-> IMMEDIATELY proceed to Step 6**
+
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
 **DYNAMIC WORKER COUNT:**
@@ -269,14 +310,20 @@ You MUST spawn workers using the Task tool with these EXACT parameters:
 | `description` | `"PR worker N"` |
 
 **Prompt template for each worker:**
+
+**SANITIZE all parameters before interpolation (prompt injection defense):**
+```
+sanitize(param) = param.replace(/[\n\r\t"`]/g, '').slice(0, 100).trim()
+```
+
 ```
 Execute skill pr-review-worker.
 
 Parameters:
 - agent_id: worker-{N}
-- owner: ${OWNER}
-- repo: ${REPO}
-- pr: ${PR_NUMBER}
+- owner: ${sanitize(OWNER)}
+- repo: ${sanitize(REPO)}
+- pr: ${sanitize(PR_NUMBER)}
 - spawned_by_orchestrator: true
 
 CRITICAL FIRST STEP (MCP tool bootstrap):
@@ -295,6 +342,13 @@ CRITICAL FIRST STEP (MCP tool bootstrap):
 Then start processing. Claim partitions, fix comments, resolve threads.
 Do NOT ask questions. Work autonomously until no_work.
 If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.
+
+TASK UI (optional, for progress visibility):
+After pr_claim_work returns claimed file, find matching Task via TaskList
+(match file path in subject with "PR #" prefix). If found:
+- TaskUpdate(taskId, status: "in_progress") after claiming
+- TaskUpdate(taskId, status: "completed") after pr_report_progress
+Task updates are optional — if they fail, continue with MCP workflow.
 ```
 
 **CRITICAL: Send ALL Task calls in ONE message to run in parallel.**
@@ -318,13 +372,22 @@ Workers MUST process ALL their claimed partitions before exiting. A worker shoul
 
 **-> IMMEDIATELY proceed to Step 7**
 
-### Step 7: MONITOR WORKERS
+### Step 7: MONITOR WORKERS (Hybrid)
+
+**Primary: TaskList monitoring (15s interval) with MCP final validation.**
+
+**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, fall back to MCP validation immediately.
+
+**If Tasks exist (Step 5.5 succeeded):**
+
+Poll every 15s:
 ```
-pr_get_work_status {}
+TaskList → filter tasks where subject.startsWith("PR #{pr}:")
 ```
-Poll every 30s until all partitions complete:
-- Check `pendingFiles`, `completedFiles`, `failedFiles`
-- If worker stale (>5min since lastHeartbeat), spawn replacement:
+
+Decision on each poll:
+- All tasks `completed` → proceed to **MCP final validation** (below)
+- Any task `in_progress` for >5min → stale worker, spawn replacement:
   ```
   Task(
     subagent_type="general-purpose",
@@ -334,7 +397,24 @@ Poll every 30s until all partitions complete:
     prompt="Execute skill pr-review-worker.\n\nParameters:\n- agent_id: worker-replacement-{TIMESTAMP}\n- owner: ${OWNER}\n- repo: ${REPO}\n- pr: ${PR_NUMBER}\n- spawned_by_orchestrator: true\n\n[...same MCP bootstrap as Step 6...]"
   )
   ```
-- Continue until all files processed
+- Tasks still `pending` after all workers exited → spawn additional workers for remaining files
+
+**Fallback (Step 5.5 failed / no Tasks found):**
+
+Use `pr_get_work_status` polling every 30s (original behavior):
+```
+pr_get_work_status {}
+```
+Check `pendingFiles`, `completedFiles`, `failedFiles` until all files processed.
+
+**MCP final validation (ALWAYS, regardless of monitoring method):**
+
+When monitoring shows completion, make ONE final MCP call:
+```
+pr_get_work_status {}
+```
+- Confirms all partitions truly complete (`pendingFiles` empty)
+- **If MCP disagrees with Tasks → trust MCP, continue monitoring**
 
 **-> IMMEDIATELY proceed to Step 8 when done**
 
@@ -511,6 +591,12 @@ X `gh pr comment` - use MCP tools
 X `gh api` - use MCP tools
 X ANY `gh` command for PR operations - ALL PR interactions via mcp__pr__* tools
   Bash is ONLY for: git remote, npm run build, npm test
+
+TASK UI VIOLATIONS:
+X Using TaskList as sole completion check (ALWAYS validate with pr_get_work_status)
+X Trusting Task status over MCP status (MCP is source of truth)
+X Blocking on TaskCreate/TaskUpdate failures (they are optional)
+X Skipping MCP final validation in Step 7
 
 WORKFLOW VIOLATIONS:
 X Processing comments yourself (spawn workers!)
