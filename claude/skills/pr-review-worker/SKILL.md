@@ -9,9 +9,8 @@ model: sonnet
 user-invocable: false
 disable-model-invocation: true
 allowed-tools:
-  - TaskUpdate
-  - TaskList
   - Bash
+  # NOTE: TaskUpdate/TaskList NOT available in background subagents (platform limitation)
   - mcp__pr__pr_claim_work
   - mcp__pr__pr_list
   - mcp__pr__pr_get
@@ -150,17 +149,8 @@ pr_claim_work {
 ```
 
 Response:
-- `status: "claimed"` -> update Task UI, then proceed to Step 2
+- `status: "claimed"` -> proceed to Step 2
 - `status: "no_work"` -> proceed to Step 4 (FINAL BUILD & TEST)
-
-**Task UI update (optional, non-blocking):** After `status: "claimed"`:
-```
-try:
-  tasks = TaskList()
-  match = tasks.find(t => t.subject === "PR #{pr}: {claimedFile}")
-  if match: TaskUpdate(match.id, status: "in_progress")
-catch: continue (Task UI failures are non-fatal)
-```
 
 **-> IMMEDIATELY proceed to Step 2 if claimed**
 
@@ -242,15 +232,6 @@ pr_report_progress {
   status: "done",
   result: { commentsProcessed: 4, commentsResolved: 3, errors: [] }
 }
-```
-
-**Task UI update (optional, non-blocking):** After `pr_report_progress`:
-```
-try:
-  tasks = TaskList()
-  match = tasks.find(t => t.subject === "PR #{pr}: {reportedFile}")
-  if match: TaskUpdate(match.id, status: "completed")
-catch: continue (Task UI failures are non-fatal)
 ```
 
 **-> IMMEDIATELY return to Step 1 (claim next partition)**
@@ -341,8 +322,6 @@ X Exiting with broken build
     MCPSearch "select:mcp__serena__get_symbols_overview" -> tool loaded
     ... (load all required tools)
 1.  pr_claim_work -> status: claimed, partition: { file: "src/App.tsx", comments: ["t1", "t2"] }
-1a. TaskList -> find task "PR #42: src/App.tsx" -> taskId: "5"
-1b. TaskUpdate(taskId: "5", status: "in_progress")
 2.  pr_get { id: "t1" } -> { body: "Add null check", aiPrompt: "..." }
 3.  mcp__serena__get_symbols_overview { relative_path: "src/App.tsx" }
 4.  mcp__serena__find_symbol { name_path: "Component/method", include_body: true }
@@ -351,14 +330,9 @@ X Exiting with broken build
 7.  pr_get { id: "t2" } -> ...
 8.  ... fix and resolve ...
 9.  pr_report_progress { file: "src/App.tsx", status: "done" }
-9a. TaskList -> find task "PR #42: src/App.tsx" -> taskId: "5"
-9b. TaskUpdate(taskId: "5", status: "completed")
 10. pr_claim_work -> status: claimed, partition: { file: "src/utils.ts", ... }
-10a. TaskList -> find task "PR #42: src/utils.ts" -> taskId: "6"
-10b. TaskUpdate(taskId: "6", status: "in_progress")
 11. ... continue ...
 12. pr_report_progress { file: "src/utils.ts", status: "done" }
-12a. TaskUpdate(taskId: "6", status: "completed")
 13. pr_claim_work -> status: no_work
 14. Detect project type (package.json / *.csproj / etc.)
 15. Run build command -> success

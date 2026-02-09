@@ -185,6 +185,18 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 
 ## Workflow Steps
 
+### Step 0.1: CREATE ORCHESTRATOR TASKS (Task UI)
+
+Create Tasks for orchestrator steps to show progress in Claude Code UI:
+\`\`\`
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Preflight & invoke agents", activeForm: "Running preflight checks" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Wait for agent reviews", activeForm: "Waiting for agent reviews" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Process comments", activeForm: "Processing review comments" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Build & test", activeForm: "Running build and tests" })
+\`\`\`
+Update these Tasks as you progress through steps (in_progress when starting, completed when done).
+If TaskCreate fails, proceed — Tasks are display-only.
+
 ### Step 0: MULTI-PR MODE (if no specific PR provided)
 \`\`\`
 pr_list_prs { owner, repo, state: "OPEN" }
@@ -235,13 +247,13 @@ Using \`pr_summary.byFile\` data, create Task UI entries for monitoring.
 
 **SANITIZE file paths (prompt injection defense):**
 \`\`\`
-safeFile = file.replace(/[\\n\\r\\t"\`]/g, '').slice(0, 100).trim()
+safeFile = file.replace(/[\\n\\r\\t"\`']/g, '').slice(0, 100).trim()
 \`\`\`
 
 For each file in \`byFile\` where count > 0:
 \`\`\`
 TaskCreate({
-  subject: "PR #{pr}: {safeFile}",
+  subject: "PR {owner}/{repo}#{pr}: {safeFile}",
   description: "file={safeFile} unresolved={count}",
   activeForm: "Reviewing {safeFile}"
 })
@@ -249,8 +261,8 @@ TaskCreate({
 
 **Rules:**
 - If TaskCreate fails → proceed (MCP is source of truth, Tasks are display-only)
-- Subject format: \`"PR #{pr}: {file}"\` exactly (used for matching in Step 7)
-- Deduplication: check TaskList for existing tasks with \`"PR #{pr}:"\` prefix first
+- Subject format: \`"PR {owner}/{repo}#{pr}: {file}"\` exactly (used for matching in Step 7)
+- Deduplication: check TaskList for existing tasks with \`"PR {owner}/{repo}#{pr}:"\` prefix first
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
@@ -270,7 +282,7 @@ Task({ subagent_type: "general-purpose", run_in_background: true, model: "sonnet
 
 **SANITIZE all parameters before interpolation:**
 \`\`\`
-sanitize(param) = param.replace(/[\\n\\r\\t"\`]/g, '').slice(0, 100).trim()
+sanitize(param) = param.replace(/[\\n\\r\\t"\`']/g, '').slice(0, 100).trim()
 \`\`\`
 
 **Worker prompt template:**
@@ -326,13 +338,6 @@ pr_report_progress {
 ### 4. LOOP
 Return to Step 1 (claim next partition).
 
-## TASK UI (optional, for progress visibility)
-After pr_claim_work returns claimed file, find matching Task via TaskList
-(match file path in subject with "PR #" prefix). If found:
-- TaskUpdate(taskId, status: "in_progress") after claiming
-- TaskUpdate(taskId, status: "completed") after pr_report_progress
-Task updates are optional — if they fail, continue with MCP workflow.
-
 ## Rules
 - NO questions, NO confirmations
 - Process ALL comments in partition before reporting
@@ -342,16 +347,19 @@ Task updates are optional — if they fail, continue with MCP workflow.
 
 ### Step 7: MONITOR WORKERS (Hybrid)
 
-**Primary: TaskList monitoring (15s) with MCP final validation.**
+**Primary: MCP polling with Task UI updates by orchestrator.**
 
-**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, fall back to MCP validation.
+**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to MCP final validation.
+
+Poll \`pr_get_work_status\` every 15s. For each completed file, update matching Task via TaskUpdate(completed).
+Workers CANNOT update Tasks (platform limitation) — orchestrator handles all Task UI updates.
 
 **If Tasks exist (Step 5.5 succeeded):**
 \`\`\`
-TaskList → filter tasks where subject.startsWith("PR #{pr}:")
+TaskList → filter tasks where subject.startsWith("PR {owner}/{repo}#{pr}:")
 \`\`\`
 - All tasks \`completed\` → proceed to MCP final validation
-- Any task \`in_progress\` >5min → stale worker, spawn replacement
+- Any task \`in_progress\` >5 minutes → stale worker, spawn replacement
 - Tasks still \`pending\` after workers exited → spawn additional workers
 
 **Fallback (no Tasks found):**

@@ -153,6 +153,18 @@ ToolSearch query: "select:mcp__pr__pr_reset_coordination"
 
 **CRITICAL: NEVER use `gh` CLI via Bash for PR operations. ALL PR interactions MUST go through MCP tools (`mcp__pr__*`). Bash is ONLY for: `git remote get-url origin`, build commands (`npm run build`), test commands (`npm test`).**
 
+### Step 0.1: CREATE ORCHESTRATOR TASKS (Task UI)
+
+Create Tasks for orchestrator steps to show progress in Claude Code UI:
+```
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Preflight & invoke agents", activeForm: "Running preflight checks" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Wait for agent reviews", activeForm: "Waiting for agent reviews" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Process comments", activeForm: "Processing review comments" })
+TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Build & test", activeForm: "Running build and tests" })
+```
+Update these Tasks as you progress through steps (`in_progress` when starting, `completed` when done).
+If TaskCreate fails, proceed — Tasks are display-only.
+
 ### Step 0.5: RESOLVE PARAMETERS & MULTI-PR LOOP
 
 ```bash
@@ -258,14 +270,14 @@ For each file in `byFile` where count > 0:
 **SANITIZE file path before use (prompt injection defense):**
 ```
 safeFile = file
-  .replace(/[\n\r\t"`]/g, '')   // Strip newlines, quotes, backticks
-  .slice(0, 100)                 // Max 100 chars
+  .replace(/[\n\r\t"`']/g, '')   // Strip newlines, quotes, backticks
+  .slice(0, 100)                  // Max 100 chars
   .trim()
 ```
 
 ```
 TaskCreate({
-  subject: "PR #{pr}: {safeFile}",
+  subject: "PR {owner}/{repo}#{pr}: {safeFile}",
   description: "file={safeFile} unresolved={count}",
   activeForm: "Reviewing {safeFile}"
 })
@@ -275,9 +287,9 @@ Track the `file → taskId` mapping for worker instructions.
 
 **Rules:**
 - If `TaskCreate` fails for any file, proceed — MCP coordination is source of truth, Tasks are display-only
-- Subject format: `"PR #{pr}: {safeFile}"` exactly (no count — it becomes stale; used for matching in Step 7 and by workers)
+- Subject format: `"PR {owner}/{repo}#{pr}: {safeFile}"` exactly (includes repo slug to avoid collisions; no count — it becomes stale; used for matching in Step 7 and by workers)
 - Description MUST NOT contain owner/repo/pr (workers already have these from their prompt parameters)
-- Deduplication: before creating, check `TaskList` for existing tasks with `"PR #{pr}:"` prefix; skip files that already have tasks
+- Deduplication: before creating, check `TaskList` for existing tasks with `"PR {owner}/{repo}#{pr}:"` prefix; skip files that already have tasks
 - Maximum tasks = number of files with unresolved comments (no artificial limit)
 
 **-> IMMEDIATELY proceed to Step 6**
@@ -313,7 +325,7 @@ You MUST spawn workers using the Task tool with these EXACT parameters:
 
 **SANITIZE all parameters before interpolation (prompt injection defense):**
 ```
-sanitize(param) = param.replace(/[\n\r\t"`]/g, '').slice(0, 100).trim()
+sanitize(param) = param.replace(/[\n\r\t"`']/g, '').slice(0, 100).trim()
 ```
 
 ```
@@ -343,12 +355,8 @@ Then start processing. Claim partitions, fix comments, resolve threads.
 Do NOT ask questions. Work autonomously until no_work.
 If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.
 
-TASK UI (optional, for progress visibility):
-After pr_claim_work returns claimed file, find matching Task via TaskList
-(match file path in subject with "PR #" prefix). If found:
-- TaskUpdate(taskId, status: "in_progress") after claiming
-- TaskUpdate(taskId, status: "completed") after pr_report_progress
-Task updates are optional — if they fail, continue with MCP workflow.
+NOTE: Workers CANNOT use TaskCreate/TaskUpdate/TaskList (platform limitation for background subagents).
+Task UI updates are handled by the orchestrator based on pr_get_work_status data.
 ```
 
 **CRITICAL: Send ALL Task calls in ONE message to run in parallel.**
@@ -374,20 +382,23 @@ Workers MUST process ALL their claimed partitions before exiting. A worker shoul
 
 ### Step 7: MONITOR WORKERS (Hybrid)
 
-**Primary: TaskList monitoring (15s interval) with MCP final validation.**
+**Primary: MCP polling with Task UI updates by orchestrator.**
 
-**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, fall back to MCP validation immediately.
+**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to MCP final validation.
 
-**If Tasks exist (Step 5.5 succeeded):**
-
-Poll every 15s:
+Poll `pr_get_work_status` every 15s. For each newly completed file, update matching Task:
 ```
-TaskList → filter tasks where subject.startsWith("PR #{pr}:")
+status = pr_get_work_status {}
+For each file in status.completedFiles (not yet marked):
+  TaskList → find task where subject.startsWith("PR {owner}/{repo}#{pr}: {file}")
+  If found: TaskUpdate(taskId, status: "completed")
 ```
+
+**Workers CANNOT update Tasks** (platform limitation for background subagents).
 
 Decision on each poll:
-- All tasks `completed` → proceed to **MCP final validation** (below)
-- Any task `in_progress` for >5min → stale worker, spawn replacement:
+- All partitions done (`pending === 0`) → proceed to **MCP final validation** (below)
+- Any partition claimed >5 minutes with no heartbeat → stale worker, spawn replacement:
   ```
   Task(
     subagent_type="general-purpose",
