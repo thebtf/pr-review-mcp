@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-02-09
+
+### Added
+
+- **Hybrid Task UI monitoring** — orchestrator creates Claude Code Tasks for file partitions and orchestrator steps, providing real-time progress visibility
+- **Cross-repo Task subject format** `PR {owner}/{repo}#{pr}: {file}` for multi-repo clarity
+
+### Fixed
+
+- Workers cannot use TaskCreate/TaskUpdate/TaskList (platform limitation for background subagents) — orchestrator now owns all Task UI updates
+
+### Security
+
+- Sanitize GitHub file paths in Task subjects and worker prompts (prompt injection defense)
+
+### Documentation
+
+- Task-first coordination design plan
+- Rejected structured output monitoring design
+
+## [0.1.2] - 2026-02-08
+
+### Fixed
+
+- Deduplicate synthetic CodeRabbit nitpick comments (#12)
+
+### Added
+
+- Compact mode for `pr_poll_updates` (#11)
+- `--version` / `-v` / `-V` flag to CLI
+
+### CI
+
+- Switch to OIDC trusted publishing for npm
+
 ## [0.1.1] - 2026-02-07
 
 ### Added
@@ -75,5 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rate limit handling via @octokit plugins
   - Cursor-based pagination for large PRs
 
+[0.1.3]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.3
+[0.1.2]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.0

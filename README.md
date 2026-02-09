@@ -27,7 +27,7 @@ This server solves the **"AI-on-AI" coordination problem**:
 - **🔌 GraphQL-Powered Integration**: Efficient cursor-based pagination for large PRs.
 - **🤖 Multi-Agent Orchestration**: Native support for CodeRabbit, Gemini, Copilot, Sourcery, Qodo, and Codex.
 - **🧠 Prompt Extraction**: Automatically parses the underlying prompt used by AI agents from comment metadata.
-- **⚡ Parallel Coordination**: Built-in specialized tools (`claim_work`, `report_progress`) for multi-worker setups.
+- **⚡ Parallel Coordination**: Built-in specialized tools (`claim_work`, `report_progress`) for multi-worker setups, with hybrid Task UI monitoring for real-time progress visibility.
 - **🛡️ Resilience**: Implements Circuit Breaker patterns and robust retry logic for GitHub API stability.
 - **🧹 Smart Parsing**:
     - **Nitpick Extraction**: Isolates minor issues from CodeRabbit summaries.
@@ -60,7 +60,7 @@ graph TD
 
 ## 🛠️ Tools
 
-The server exposes **15 optimized tools** for agents.
+The server exposes **16 optimized tools** for agents.
 
 ### 📊 Analysis & Retrieval
 | Tool | Description |
@@ -88,6 +88,18 @@ The server exposes **15 optimized tools** for agents.
 | `pr_claim_work` | Lock a partition of files for a worker agent. |
 | `pr_report_progress` | Report status (done/failed) for a claimed task. |
 | `pr_get_work_status` | View global orchestration status. |
+| `pr_reset_coordination` | Reset coordination state (destructive, requires confirmation). |
+
+---
+
+## 📝 MCP Prompts
+
+The server provides two MCP prompts for guided workflows:
+
+| Prompt | Description |
+|--------|-------------|
+| `review` (`/pr:review`) | Autonomous multi-agent PR review orchestrator. Spawns parallel workers to process all AI review comments, with real-time Task UI monitoring. |
+| `setup` (`/pr:setup`) | Guided onboarding for `.github/pr-review.json` configuration — agent selection, env config, priority. |
 
 ---
 
