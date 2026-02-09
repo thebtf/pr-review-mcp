@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-02-09
+
+### Added
+
+- **Branch protection guard** — refuse to process a different PR when on a feature branch with an open PR (prevents merge conflicts in worktree setups)
+- `branchMismatch` detection in `buildContext()` with clear refusal message and recovery options
+- `sameRepo` guard — branch protection only applies within the same repository (cross-repo is safe)
+- `sanitizePromptValue()` for branch names in prompts (prompt injection defense)
+- 8 unit tests for branch protection scenarios (mismatch/allow/bypass/fail-open)
+
+### Changed
+
+- `buildContext()` restructured: branch detection runs **before** explicit PR processing
+- `prListPRs` result cached to avoid duplicate API call in multi-PR fallback
+
 ## [0.1.3] - 2026-02-09
 
 ### Added
