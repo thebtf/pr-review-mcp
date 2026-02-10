@@ -245,7 +245,7 @@ pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 \`\`\`
 pr_summary { owner, repo, pr }
 \`\`\`
-- \`unresolved > 0\` → Step 5.5
+- \`unresolved > 0\` → Step 6
 - \`unresolved === 0\` → Step 8
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
@@ -339,16 +339,16 @@ pr_progress_update { phase: "monitor" }
 
 **Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to final validation.
 
-Poll \`pr_get_work_status\` every 15s. Check pendingFiles, completedFiles, failedFiles.
-- All files completed (pendingFiles empty) → proceed to Step 8
+Poll \`pr_get_work_status\` every 15s. Check progress.pending, progress.claimed, progress.done, progress.failed.
+- All partitions done (\`progress.pending === 0 && progress.claimed === 0\`) → proceed to Step 8
 - Stale workers (no progress for >5 minutes) → spawn replacement
-- Pending files after all workers exited → spawn additional workers
+- Pending partitions after all workers exited → spawn additional workers
 
 **Final validation:**
 \`\`\`
 pr_get_work_status {}
 \`\`\`
-- Confirms all partitions complete (pendingFiles empty)
+- Confirms all partitions complete (\`progress.pending === 0 && progress.claimed === 0\`)
 - If not complete → continue monitoring
 
 ### Step 8: BUILD & TEST

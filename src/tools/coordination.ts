@@ -346,7 +346,7 @@ export async function prProgressCheck(
   const progress = stateManager.getOrchestratorProgress();
   const status = stateManager.getStatus();
   return {
-    orchestrator: progress ?? { phase: 'none' },
+    orchestrator: progress,
     run: {
       active: stateManager.isRunActive(),
       progress: status.progress,

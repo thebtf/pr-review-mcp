@@ -256,18 +256,20 @@ class CoordinationStateManager {
 
   updateOrchestratorPhase(phase: OrchestratorPhaseType, detail?: string): void {
     const now = new Date().toISOString();
+    const isTerminal = phase === 'complete' || phase === 'error' || phase === 'aborted';
     if (!this.orchestratorProgress) {
       this.orchestratorProgress = {
         currentPhase: phase,
         detail,
         history: [{ phase, detail, timestamp: now }],
-        startedAt: now
+        startedAt: now,
+        completedAt: isTerminal ? now : undefined
       };
     } else {
       this.orchestratorProgress.currentPhase = phase;
       this.orchestratorProgress.detail = detail;
       this.orchestratorProgress.history.push({ phase, detail, timestamp: now });
-      if (phase === 'complete' || phase === 'error' || phase === 'aborted') {
+      if (isTerminal) {
         this.orchestratorProgress.completedAt = now;
       }
     }
