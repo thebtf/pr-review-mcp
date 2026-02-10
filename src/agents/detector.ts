@@ -167,7 +167,8 @@ export async function detectReviewedAgents(
       'coderabbit': 'coderabbit',
       'gemini-code-assist': 'gemini',
       'sourcery-ai': 'sourcery',
-      'sourcery': 'sourcery'
+      'sourcery': 'sourcery',
+      'greptile': 'greptile'
     };
 
     for (const checkRun of checkRuns) {
