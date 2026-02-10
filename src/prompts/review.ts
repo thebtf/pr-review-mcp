@@ -194,17 +194,12 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 
 ## Workflow Steps
 
-### Step 0.1: CREATE ORCHESTRATOR TASKS (Task UI)
+### Task UI Updates
 
-Create Tasks for orchestrator steps to show progress in Claude Code UI:
-\`\`\`
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Preflight & invoke agents", activeForm: "Running preflight checks" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Wait for agent reviews", activeForm: "Waiting for agent reviews" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Process comments", activeForm: "Processing review comments" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Build & test", activeForm: "Running build and tests" })
-\`\`\`
-Update these Tasks as you progress through steps (in_progress when starting, completed when done).
-If TaskCreate fails, proceed — Tasks are display-only.
+Orchestrator Tasks may already exist (created by caller before delegation).
+Find them via \`TaskList\` → filter by subject prefix "PR {owner}/{repo}#{pr}:".
+Update matching Tasks as you progress: \`TaskUpdate({ taskId, status: "in_progress" })\` when starting a step, \`TaskUpdate({ taskId, status: "completed" })\` when done.
+If no Tasks found, proceed without them — Tasks are display-only.
 
 ### Step 0: MULTI-PR MODE (if no specific PR provided)
 \`\`\`
@@ -361,9 +356,8 @@ Return to Step 1 (claim next partition).
 **Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to MCP final validation.
 
 Poll \`pr_get_work_status\` every 15s. For each completed file, update matching Task via TaskUpdate(completed).
-Workers CANNOT update Tasks (platform limitation) — orchestrator handles all Task UI updates.
 
-**If Tasks exist (Step 5.5 succeeded):**
+**If Tasks exist (found via TaskList):**
 \`\`\`
 TaskList → filter tasks where subject.startsWith("PR {owner}/{repo}#{pr}:")
 \`\`\`
@@ -417,7 +411,6 @@ X Spawning workers ONE BY ONE
 X Asking "should I start?"
 X Using TaskList as sole completion check (ALWAYS validate with pr_get_work_status)
 X Trusting Task status over MCP status (MCP is source of truth)
-X Blocking on TaskCreate/TaskUpdate failures (they are optional)
 X Skipping MCP final validation in Step 7
 \`\`\`
 `;
@@ -769,6 +762,7 @@ function generateSinglePRPrompt(context: PromptContext): string {
     : '';
 
   return `[DELEGATION: background-sonnet]
+[PRE-TASKS: preflight, wait-reviews, process-comments, build-test]
 [EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
@@ -789,6 +783,7 @@ function generateBatchPrompt(context: PromptContext): string {
   const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
   return `[DELEGATION: background-sonnet]
+[PRE-TASKS: preflight, wait-reviews, process-comments, build-test]
 [EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
