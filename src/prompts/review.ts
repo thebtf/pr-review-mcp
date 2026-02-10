@@ -158,6 +158,15 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 
 ---
 
+## PROGRESS REPORTING
+
+Report phase transitions via \`pr_progress_update\` at the START of each step.
+Phases: escape_check, preflight, label, invoke_agents, poll_wait, spawn_workers, monitor, build_test, complete, error, aborted.
+Call ONCE per step. Use \`detail\` for context (iteration counts, error messages).
+On error/abort, report with detail explaining why.
+
+---
+
 ## State Machine
 
 \`\`\`
@@ -200,6 +209,7 @@ pr_list_prs { owner, repo, state: "OPEN" }
 
 ### Step 1: ESCAPE CHECK
 \`\`\`
+pr_progress_update { phase: "escape_check" }
 pr_labels { owner, repo, pr, action: "get" }
 \`\`\`
 - \`pause-ai-review\` present → **STOP**
@@ -207,6 +217,7 @@ pr_labels { owner, repo, pr, action: "get" }
 
 ### Step 2: PREFLIGHT
 \`\`\`
+pr_progress_update { phase: "preflight" }
 pr_get_work_status {}
 \`\`\`
 - \`isActive && runAge < 300000\` → **ABORT** (another orchestrator)
@@ -214,16 +225,19 @@ pr_get_work_status {}
 
 ### Step 3: LABEL
 \`\`\`
+pr_progress_update { phase: "label" }
 pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:active"] }
 \`\`\`
 
 ### Step 4: INVOKE AGENTS
 \`\`\`
+pr_progress_update { phase: "invoke_agents" }
 pr_invoke { owner, repo, pr, agent: "all" }
 \`\`\`
 
 ### Step 5: POLL & WAIT
 \`\`\`
+pr_progress_update { phase: "poll_wait" }
 pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 \`\`\`
 - \`allAgentsReady: false\` → wait 30s, poll again
@@ -235,6 +249,9 @@ pr_summary { owner, repo, pr }
 - \`unresolved === 0\` → Step 8
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
+\`\`\`
+pr_progress_update { phase: "spawn_workers", detail: "N workers for M unresolved" }
+\`\`\`
 
 **DYNAMIC WORKER COUNT:**
 \`\`\`
@@ -316,6 +333,9 @@ Return to Step 1 (claim next partition).
 \`\`\`
 
 ### Step 7: MONITOR WORKERS
+\`\`\`
+pr_progress_update { phase: "monitor" }
+\`\`\`
 
 **Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to final validation.
 
@@ -332,6 +352,9 @@ pr_get_work_status {}
 - If not complete → continue monitoring
 
 ### Step 8: BUILD & TEST
+\`\`\`
+pr_progress_update { phase: "build_test" }
+\`\`\`
 
 | Marker | Build | Test |
 |--------|-------|------|
@@ -344,6 +367,7 @@ pr_get_work_status {}
 
 ### Step 9: COMPLETION
 \`\`\`
+pr_progress_update { phase: "complete" }
 pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:passed"] }
 \`\`\`
 

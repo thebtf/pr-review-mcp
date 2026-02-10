@@ -42,10 +42,14 @@ import {
   prReportProgress,
   prGetWorkStatus,
   prResetCoordination,
+  prProgressUpdate,
+  prProgressCheck,
   ClaimWorkSchema,
   ReportProgressSchema,
   GetWorkStatusSchema,
-  ResetCoordinationSchema
+  ResetCoordinationSchema,
+  ProgressUpdateSchema,
+  ProgressCheckSchema
 } from './tools/coordination.js';
 import { getInvokableAgentIds } from './agents/registry.js';
 import {
@@ -591,6 +595,44 @@ export class PRReviewMCPServer {
               idempotentHint: true,
               openWorldHint: false
             }
+          },
+          {
+            name: 'pr_progress_update',
+            description: 'Report orchestrator phase transition (called by background subagent)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                phase: {
+                  type: 'string',
+                  enum: ['escape_check', 'preflight', 'label', 'invoke_agents', 'poll_wait', 'spawn_workers', 'monitor', 'build_test', 'complete', 'error', 'aborted'],
+                  description: 'Current orchestrator phase'
+                },
+                detail: { type: 'string', description: 'Optional context (max 200 chars)', maxLength: 200 }
+              },
+              required: ['phase']
+            },
+            annotations: {
+              title: 'Report Orchestrator Phase',
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false
+            }
+          },
+          {
+            name: 'pr_progress_check',
+            description: 'Check orchestrator progress and run status in a single call',
+            inputSchema: {
+              type: 'object',
+              properties: {}
+            },
+            annotations: {
+              title: 'Check Orchestrator Progress',
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false
+            }
           }
         ] as Tool[]
       };
@@ -641,7 +683,9 @@ export class PRReviewMCPServer {
       'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
       'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
       'pr_get_work_status': createToolHandler(GetWorkStatusSchema, prGetWorkStatus),
-      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination)
+      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination),
+      'pr_progress_update': createSimpleHandler(ProgressUpdateSchema, prProgressUpdate),
+      'pr_progress_check': createSimpleHandler(ProgressCheckSchema, prProgressCheck)
     };
 
     // Handle tool calls

@@ -79,7 +79,37 @@ export interface CoordinationState {
   completedAt?: string;
 }
 
+// Orchestrator progress tracking (Phase 4: Progress Bus)
+export const OrchestratorPhase = z.enum([
+  'escape_check', 'preflight', 'label', 'invoke_agents', 'poll_wait',
+  'spawn_workers', 'monitor', 'build_test', 'complete', 'error', 'aborted'
+]);
+export type OrchestratorPhaseType = z.infer<typeof OrchestratorPhase>;
+
+export interface PhaseEntry {
+  phase: OrchestratorPhaseType;
+  detail?: string;
+  timestamp: string;
+}
+
+export interface OrchestratorProgress {
+  currentPhase: OrchestratorPhaseType;
+  detail?: string;
+  history: PhaseEntry[];
+  startedAt: string;
+  completedAt?: string;
+}
+
+export const ProgressUpdateSchema = z.object({
+  phase: OrchestratorPhase,
+  detail: z.string().max(200).optional()
+});
+
+export const ProgressCheckSchema = z.object({});
+
 export type ClaimWorkInput = z.infer<typeof ClaimWorkSchema>;
 export type ReportProgressInput = z.infer<typeof ReportProgressSchema>;
 export type GetWorkStatusInput = z.infer<typeof GetWorkStatusSchema>;
 export type ResetCoordinationInput = z.infer<typeof ResetCoordinationSchema>;
+export type ProgressUpdateInput = z.infer<typeof ProgressUpdateSchema>;
+export type ProgressCheckInput = z.infer<typeof ProgressCheckSchema>;

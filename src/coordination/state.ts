@@ -17,7 +17,9 @@ import type {
   AgentState,
   PartitionResult,
   NitpickResolution,
-  ParentChildEntry
+  ParentChildEntry,
+  OrchestratorProgress,
+  OrchestratorPhaseType
 } from './types.js';
 
 /**
@@ -43,6 +45,7 @@ class CoordinationStateManager {
   private resolvedNitpicks: Map<string, NitpickResolution> = new Map();
   private nitpicksLoaded: boolean = false;
   private currentPrKey: string | null = null;
+  private orchestratorProgress: OrchestratorProgress | null = null;
 
   /**
    * Initialize a new coordination run
@@ -247,6 +250,31 @@ class CoordinationStateManager {
   async getResolvedNitpicksCount(prInfo?: { owner: string; repo: string; pr: number }): Promise<number> {
     await this.ensureNitpicksLoaded(prInfo);
     return this.resolvedNitpicks.size;
+  }
+
+  // --- Orchestrator Progress ---
+
+  updateOrchestratorPhase(phase: OrchestratorPhaseType, detail?: string): void {
+    const now = new Date().toISOString();
+    if (!this.orchestratorProgress) {
+      this.orchestratorProgress = {
+        currentPhase: phase,
+        detail,
+        history: [{ phase, detail, timestamp: now }],
+        startedAt: now
+      };
+    } else {
+      this.orchestratorProgress.currentPhase = phase;
+      this.orchestratorProgress.detail = detail;
+      this.orchestratorProgress.history.push({ phase, detail, timestamp: now });
+      if (phase === 'complete' || phase === 'error' || phase === 'aborted') {
+        this.orchestratorProgress.completedAt = now;
+      }
+    }
+  }
+
+  getOrchestratorProgress(): OrchestratorProgress | null {
+    return this.orchestratorProgress;
   }
 
   // --- Parent/Child Coordination ---
@@ -470,6 +498,7 @@ class CoordinationStateManager {
    */
   resetRun(): void {
     this.currentRun = null;
+    this.orchestratorProgress = null;
   }
 
   /**
