@@ -383,6 +383,8 @@ pr_get_work_status {}
 \`\`\`
 - Confirms all partitions complete (pendingFiles empty)
 - **If MCP disagrees with Tasks → trust MCP, continue monitoring**
+- **After confirmation: sweep ALL partition Tasks to completed:**
+  \`TaskList\` → for each task with prefix "PR {owner}/{repo}#{pr}:" still not completed → \`TaskUpdate({ taskId, status: "completed" })\`
 
 ### Step 8: BUILD & TEST
 
@@ -766,7 +768,8 @@ function generateSinglePRPrompt(context: PromptContext): string {
     ? ` (auto-detected from branch \`${sanitizePromptValue(autoDetectedBranch)}\`)`
     : '';
 
-  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  return `[DELEGATION: background-sonnet]
+[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
 **${statusLine}**${activeWarning}
@@ -785,7 +788,8 @@ function generateBatchPrompt(context: PromptContext): string {
 
   const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
-  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  return `[DELEGATION: background-sonnet]
+[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
 **Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
