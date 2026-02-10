@@ -383,8 +383,8 @@ pr_get_work_status {}
 \`\`\`
 - Confirms all partitions complete (pendingFiles empty)
 - **If MCP disagrees with Tasks → trust MCP, continue monitoring**
-- **After confirmation: sweep ALL partition Tasks to completed:**
-  \`TaskList\` → for each task with prefix "PR {owner}/{repo}#{pr}:" still not completed → \`TaskUpdate({ taskId, status: "completed" })\`
+- **After confirmation: sweep ONLY partition Tasks (created in Step 5.5) to completed:**
+  \`TaskList\` → for each task with prefix "PR {owner}/{repo}#{pr}:" **and** description starts with "file=" **and** status is "pending" or "in_progress" → \`TaskUpdate({ taskId, status: "completed" })\`
 
 ### Step 8: BUILD & TEST
 
