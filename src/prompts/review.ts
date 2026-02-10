@@ -138,10 +138,9 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 | Orchestrator DOES | Orchestrator DOES NOT |
 |-------------------|----------------------|
 | Spawn workers via Task tool | Read/Edit code files |
-| Monitor via TaskList + pr_get_work_status | Call pr_list, pr_get |
+| Monitor via pr_get_work_status | Call pr_list, pr_get |
 | Set labels via pr_labels | Call pr_resolve |
-| Track progress via TaskList (primary) | Process comments directly |
-| Create Task UI entries per file | Fix code issues |
+| Track progress via pr_get_work_status | Process comments directly |
 
 **If you use pr_list, pr_get, pr_resolve, Read, Edit — STOP. Spawn workers instead.**
 
@@ -155,7 +154,7 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 | **ESCAPE HATCH** | Stop if \`pause-ai-review\` label present |
 | **FIX ALL** | Process ALL comments. No skipping. |
 | **BUILD MUST PASS** | Never finish with broken build. |
-| **MCP = SOURCE OF TRUTH** | Task UI is display-only. Always validate with pr_get_work_status. |
+| **MCP = SOURCE OF TRUTH** | Always validate completion with pr_get_work_status. |
 
 ---
 
@@ -176,14 +175,11 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
                     +-----+-----+
                     yes         no
                     |            |
-             CREATE_TASKS    BUILD_TEST -> COMPLETE
-                    |
-                    v
-             SPAWN_WORKERS
+             SPAWN_WORKERS  BUILD_TEST -> COMPLETE
                     |
                     v
                 MONITOR
-               (TaskList
+           (pr_get_work_status
                 15s loop)
                     |
                     v
@@ -193,13 +189,6 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 ---
 
 ## Workflow Steps
-
-### Task UI Updates
-
-Orchestrator Tasks may already exist (created by caller before delegation).
-Find them via \`TaskList\` → filter by subject prefix "PR {owner}/{repo}#{pr}:".
-Update matching Tasks as you progress: \`TaskUpdate({ taskId, status: "in_progress" })\` when starting a step, \`TaskUpdate({ taskId, status: "completed" })\` when done.
-If no Tasks found, proceed without them — Tasks are display-only.
 
 ### Step 0: MULTI-PR MODE (if no specific PR provided)
 \`\`\`
@@ -244,29 +233,6 @@ pr_summary { owner, repo, pr }
 \`\`\`
 - \`unresolved > 0\` → Step 5.5
 - \`unresolved === 0\` → Step 8
-
-### Step 5.5: CREATE PARTITION TASKS (Task UI)
-
-Using \`pr_summary.byFile\` data, create Task UI entries for monitoring.
-
-**SANITIZE file paths (prompt injection defense):**
-\`\`\`
-safeFile = file.replace(/[\\n\\r\\t"\`']/g, '').slice(0, 100).trim()
-\`\`\`
-
-For each file in \`byFile\` where count > 0:
-\`\`\`
-TaskCreate({
-  subject: "PR {owner}/{repo}#{pr}: {safeFile}",
-  description: "file={safeFile} unresolved={count}",
-  activeForm: "Reviewing {safeFile}"
-})
-\`\`\`
-
-**Rules:**
-- If TaskCreate fails → proceed (MCP is source of truth, Tasks are display-only)
-- Subject format: \`"PR {owner}/{repo}#{pr}: {file}"\` exactly (used for matching in Step 7)
-- Deduplication: check TaskList for existing tasks with \`"PR {owner}/{repo}#{pr}:"\` prefix first
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 
@@ -349,36 +315,21 @@ Return to Step 1 (claim next partition).
 - Before EXIT: run build command if you modified code
 \`\`\`
 
-### Step 7: MONITOR WORKERS (Hybrid)
+### Step 7: MONITOR WORKERS
 
-**Primary: MCP polling with Task UI updates by orchestrator.**
+**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to final validation.
 
-**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to MCP final validation.
+Poll \`pr_get_work_status\` every 15s. Check pendingFiles, completedFiles, failedFiles.
+- All files completed (pendingFiles empty) → proceed to Step 8
+- Stale workers (no progress for >5 minutes) → spawn replacement
+- Pending files after all workers exited → spawn additional workers
 
-Poll \`pr_get_work_status\` every 15s. For each completed file, update matching Task via TaskUpdate(completed).
-
-**If Tasks exist (found via TaskList):**
-\`\`\`
-TaskList → filter tasks where subject.startsWith("PR {owner}/{repo}#{pr}:")
-\`\`\`
-- All tasks \`completed\` → proceed to MCP final validation
-- Any task \`in_progress\` >5 minutes → stale worker, spawn replacement
-- Tasks still \`pending\` after workers exited → spawn additional workers
-
-**Fallback (no Tasks found):**
-\`\`\`
-pr_get_work_status {}
-\`\`\`
-Poll every 30s. Check pendingFiles, completedFiles, failedFiles.
-
-**MCP final validation (ALWAYS):**
+**Final validation:**
 \`\`\`
 pr_get_work_status {}
 \`\`\`
 - Confirms all partitions complete (pendingFiles empty)
-- **If MCP disagrees with Tasks → trust MCP, continue monitoring**
-- **After confirmation: sweep ONLY partition Tasks (created in Step 5.5) to completed:**
-  \`TaskList\` → for each task with prefix "PR {owner}/{repo}#{pr}:" **and** description starts with "file=" **and** status is "pending" or "in_progress" → \`TaskUpdate({ taskId, status: "completed" })\`
+- If not complete → continue monitoring
 
 ### Step 8: BUILD & TEST
 
@@ -409,8 +360,6 @@ X Read, Edit, Write (workers only)
 X Processing comments yourself
 X Spawning workers ONE BY ONE
 X Asking "should I start?"
-X Using TaskList as sole completion check (ALWAYS validate with pr_get_work_status)
-X Trusting Task status over MCP status (MCP is source of truth)
 X Skipping MCP final validation in Step 7
 \`\`\`
 `;
