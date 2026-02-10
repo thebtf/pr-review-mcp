@@ -257,7 +257,9 @@ class CoordinationStateManager {
   updateOrchestratorPhase(phase: OrchestratorPhaseType, detail?: string): void {
     const now = new Date().toISOString();
     const isTerminal = phase === 'complete' || phase === 'error' || phase === 'aborted';
-    if (!this.orchestratorProgress) {
+
+    // Start fresh if no progress exists OR previous run completed
+    if (!this.orchestratorProgress || this.orchestratorProgress.completedAt) {
       this.orchestratorProgress = {
         currentPhase: phase,
         detail,
