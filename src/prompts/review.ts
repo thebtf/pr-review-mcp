@@ -735,7 +735,39 @@ function generateSinglePRPrompt(context: PromptContext): string {
     : '';
 
   return `[DELEGATION: background-sonnet]
-[PRE-TASKS: preflight, wait-reviews, process-comments, build-test]
+
+## PARENT: Create Tasks, Delegate, Sweep
+
+**1. Create these tasks NOW** (TaskCreate in YOUR context):
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Run preflight checks | Running preflight checks |
+| 2 | Wait for AI agent reviews | Waiting for AI reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Run build and tests | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately.
+
+**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
+
+**3. On completion notification**, call \`pr_progress_check\` and sweep tasks:
+
+| currentPhase | Action |
+|-------------|--------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | All completed |
+| error, aborted | Current task stays, report error detail |
+
+**Do NOT poll during execution.** Wait for completion notification, then sweep all at once.
+
+---
+
+## ORCHESTRATOR PROMPT
+
 [EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
@@ -756,7 +788,39 @@ function generateBatchPrompt(context: PromptContext): string {
   const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
   return `[DELEGATION: background-sonnet]
-[PRE-TASKS: preflight, wait-reviews, process-comments, build-test]
+
+## PARENT: Create Tasks, Delegate, Sweep
+
+**1. Create these tasks NOW** (TaskCreate in YOUR context):
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Run preflight checks | Running preflight checks |
+| 2 | Wait for AI agent reviews | Waiting for AI reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Run build and tests | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately.
+
+**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
+
+**3. On completion notification**, call \`pr_progress_check\` and sweep tasks:
+
+| currentPhase | Action |
+|-------------|--------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | All completed |
+| error, aborted | Current task stays, report error detail |
+
+**Do NOT poll during execution.** Wait for completion notification, then sweep all at once.
+
+---
+
+## ORCHESTRATOR PROMPT
+
 [EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
