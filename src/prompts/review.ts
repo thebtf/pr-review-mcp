@@ -751,7 +751,7 @@ Mark task 1 as \`in_progress\` immediately.
 
 **2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
 
-**3. On completion notification**, call \`pr_progress_check\` and sweep tasks:
+**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
 
 | currentPhase | Action |
 |-------------|--------|
@@ -762,7 +762,7 @@ Mark task 1 as \`in_progress\` immediately.
 | complete | All completed |
 | error, aborted | Current task stays, report error detail |
 
-**Do NOT poll during execution.** Wait for completion notification, then sweep all at once.
+React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
 
 ---
 
@@ -804,7 +804,7 @@ Mark task 1 as \`in_progress\` immediately.
 
 **2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
 
-**3. On completion notification**, call \`pr_progress_check\` and sweep tasks:
+**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
 
 | currentPhase | Action |
 |-------------|--------|
@@ -815,7 +815,7 @@ Mark task 1 as \`in_progress\` immediately.
 | complete | All completed |
 | error, aborted | Current task stays, report error detail |
 
-**Do NOT poll during execution.** Wait for completion notification, then sweep all at once.
+React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
 
 ---
 
