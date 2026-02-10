@@ -7,11 +7,15 @@ import {
   ReportProgressSchema,
   GetWorkStatusSchema,
   ResetCoordinationSchema,
+  ProgressUpdateSchema,
+  ProgressCheckSchema,
   type FilePartition,
   type ClaimWorkInput,
   type ReportProgressInput,
   type GetWorkStatusInput,
-  type ResetCoordinationInput
+  type ResetCoordinationInput,
+  type ProgressUpdateInput,
+  type ProgressCheckInput
 } from '../coordination/types.js';
 import { fetchAllThreads } from './shared.js';
 import { SEVERITY_ORDER, type Severity } from '../extractors/severity.js';
@@ -329,5 +333,32 @@ export async function prResetCoordination(
   };
 }
 
+export async function prProgressUpdate(
+  input: ProgressUpdateInput
+) {
+  stateManager.updateOrchestratorPhase(input.phase, input.detail);
+  return { status: 'ok', phase: input.phase, detail: input.detail };
+}
+
+export async function prProgressCheck(
+  _input: ProgressCheckInput
+) {
+  const progress = stateManager.getOrchestratorProgress();
+  const status = stateManager.getStatus();
+  return {
+    orchestrator: progress,
+    run: {
+      active: stateManager.isRunActive(),
+      progress: status.progress,
+      total: status.total,
+      agents: (status as any).agents?.length,
+      completedAt: status.completedAt
+    }
+  };
+}
+
 // Export schemas for registration
-export { ClaimWorkSchema, ReportProgressSchema, GetWorkStatusSchema, ResetCoordinationSchema };
+export {
+  ClaimWorkSchema, ReportProgressSchema, GetWorkStatusSchema, ResetCoordinationSchema,
+  ProgressUpdateSchema, ProgressCheckSchema
+};

@@ -138,10 +138,9 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 | Orchestrator DOES | Orchestrator DOES NOT |
 |-------------------|----------------------|
 | Spawn workers via Task tool | Read/Edit code files |
-| Monitor via TaskList + pr_get_work_status | Call pr_list, pr_get |
+| Monitor via pr_get_work_status | Call pr_list, pr_get |
 | Set labels via pr_labels | Call pr_resolve |
-| Track progress via TaskList (primary) | Process comments directly |
-| Create Task UI entries per file | Fix code issues |
+| Track progress via pr_get_work_status | Process comments directly |
 
 **If you use pr_list, pr_get, pr_resolve, Read, Edit — STOP. Spawn workers instead.**
 
@@ -155,7 +154,16 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 | **ESCAPE HATCH** | Stop if \`pause-ai-review\` label present |
 | **FIX ALL** | Process ALL comments. No skipping. |
 | **BUILD MUST PASS** | Never finish with broken build. |
-| **MCP = SOURCE OF TRUTH** | Task UI is display-only. Always validate with pr_get_work_status. |
+| **MCP = SOURCE OF TRUTH** | Always validate completion with pr_get_work_status. |
+
+---
+
+## PROGRESS REPORTING
+
+Report phase transitions via \`pr_progress_update\` at the START of each step.
+Phases: escape_check, preflight, label, invoke_agents, poll_wait, spawn_workers, monitor, build_test, complete, error, aborted.
+Call ONCE per step. Use \`detail\` for context (iteration counts, error messages).
+On error/abort, report with detail explaining why.
 
 ---
 
@@ -176,14 +184,11 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
                     +-----+-----+
                     yes         no
                     |            |
-             CREATE_TASKS    BUILD_TEST -> COMPLETE
-                    |
-                    v
-             SPAWN_WORKERS
+             SPAWN_WORKERS  BUILD_TEST -> COMPLETE
                     |
                     v
                 MONITOR
-               (TaskList
+           (pr_get_work_status
                 15s loop)
                     |
                     v
@@ -193,18 +198,6 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
 ---
 
 ## Workflow Steps
-
-### Step 0.1: CREATE ORCHESTRATOR TASKS (Task UI)
-
-Create Tasks for orchestrator steps to show progress in Claude Code UI:
-\`\`\`
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Preflight & invoke agents", activeForm: "Running preflight checks" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Wait for agent reviews", activeForm: "Waiting for agent reviews" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Process comments", activeForm: "Processing review comments" })
-TaskCreate({ subject: "PR {owner}/{repo}#{pr}: Build & test", activeForm: "Running build and tests" })
-\`\`\`
-Update these Tasks as you progress through steps (in_progress when starting, completed when done).
-If TaskCreate fails, proceed — Tasks are display-only.
 
 ### Step 0: MULTI-PR MODE (if no specific PR provided)
 \`\`\`
@@ -216,6 +209,7 @@ pr_list_prs { owner, repo, state: "OPEN" }
 
 ### Step 1: ESCAPE CHECK
 \`\`\`
+pr_progress_update { phase: "escape_check" }
 pr_labels { owner, repo, pr, action: "get" }
 \`\`\`
 - \`pause-ai-review\` present → **STOP**
@@ -223,6 +217,7 @@ pr_labels { owner, repo, pr, action: "get" }
 
 ### Step 2: PREFLIGHT
 \`\`\`
+pr_progress_update { phase: "preflight" }
 pr_get_work_status {}
 \`\`\`
 - \`isActive && runAge < 300000\` → **ABORT** (another orchestrator)
@@ -230,16 +225,19 @@ pr_get_work_status {}
 
 ### Step 3: LABEL
 \`\`\`
+pr_progress_update { phase: "label" }
 pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:active"] }
 \`\`\`
 
 ### Step 4: INVOKE AGENTS
 \`\`\`
+pr_progress_update { phase: "invoke_agents" }
 pr_invoke { owner, repo, pr, agent: "all" }
 \`\`\`
 
 ### Step 5: POLL & WAIT
 \`\`\`
+pr_progress_update { phase: "poll_wait" }
 pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 \`\`\`
 - \`allAgentsReady: false\` → wait 30s, poll again
@@ -247,33 +245,13 @@ pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
 \`\`\`
 pr_summary { owner, repo, pr }
 \`\`\`
-- \`unresolved > 0\` → Step 5.5
+- \`unresolved > 0\` → Step 6
 - \`unresolved === 0\` → Step 8
 
-### Step 5.5: CREATE PARTITION TASKS (Task UI)
-
-Using \`pr_summary.byFile\` data, create Task UI entries for monitoring.
-
-**SANITIZE file paths (prompt injection defense):**
-\`\`\`
-safeFile = file.replace(/[\\n\\r\\t"\`']/g, '').slice(0, 100).trim()
-\`\`\`
-
-For each file in \`byFile\` where count > 0:
-\`\`\`
-TaskCreate({
-  subject: "PR {owner}/{repo}#{pr}: {safeFile}",
-  description: "file={safeFile} unresolved={count}",
-  activeForm: "Reviewing {safeFile}"
-})
-\`\`\`
-
-**Rules:**
-- If TaskCreate fails → proceed (MCP is source of truth, Tasks are display-only)
-- Subject format: \`"PR {owner}/{repo}#{pr}: {file}"\` exactly (used for matching in Step 7)
-- Deduplication: check TaskList for existing tasks with \`"PR {owner}/{repo}#{pr}:"\` prefix first
-
 ### Step 6: SPAWN WORKERS (PARALLEL)
+\`\`\`
+pr_progress_update { phase: "spawn_workers", detail: "N workers for M unresolved" }
+\`\`\`
 
 **DYNAMIC WORKER COUNT:**
 \`\`\`
@@ -354,37 +332,29 @@ Return to Step 1 (claim next partition).
 - Before EXIT: run build command if you modified code
 \`\`\`
 
-### Step 7: MONITOR WORKERS (Hybrid)
-
-**Primary: MCP polling with Task UI updates by orchestrator.**
-
-**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to MCP final validation.
-
-Poll \`pr_get_work_status\` every 15s. For each completed file, update matching Task via TaskUpdate(completed).
-Workers CANNOT update Tasks (platform limitation) — orchestrator handles all Task UI updates.
-
-**If Tasks exist (Step 5.5 succeeded):**
+### Step 7: MONITOR WORKERS
 \`\`\`
-TaskList → filter tasks where subject.startsWith("PR {owner}/{repo}#{pr}:")
+pr_progress_update { phase: "monitor" }
 \`\`\`
-- All tasks \`completed\` → proceed to MCP final validation
-- Any task \`in_progress\` >5 minutes → stale worker, spawn replacement
-- Tasks still \`pending\` after workers exited → spawn additional workers
 
-**Fallback (no Tasks found):**
+**Max iterations: 40 (15s × 40 = 10 minutes).** If exceeded, proceed to final validation.
+
+Poll \`pr_get_work_status\` every 15s. Check progress.pending, progress.claimed, progress.done, progress.failed.
+- All partitions done (\`progress.pending === 0 && progress.claimed === 0\`) → proceed to Step 8
+- Stale workers (no progress for >5 minutes) → spawn replacement
+- Pending partitions after all workers exited → spawn additional workers
+
+**Final validation:**
 \`\`\`
 pr_get_work_status {}
 \`\`\`
-Poll every 30s. Check pendingFiles, completedFiles, failedFiles.
-
-**MCP final validation (ALWAYS):**
-\`\`\`
-pr_get_work_status {}
-\`\`\`
-- Confirms all partitions complete (pendingFiles empty)
-- **If MCP disagrees with Tasks → trust MCP, continue monitoring**
+- Confirms all partitions complete (\`progress.pending === 0 && progress.claimed === 0\`)
+- If not complete → continue monitoring
 
 ### Step 8: BUILD & TEST
+\`\`\`
+pr_progress_update { phase: "build_test" }
+\`\`\`
 
 | Marker | Build | Test |
 |--------|-------|------|
@@ -397,6 +367,7 @@ pr_get_work_status {}
 
 ### Step 9: COMPLETION
 \`\`\`
+pr_progress_update { phase: "complete" }
 pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:passed"] }
 \`\`\`
 
@@ -413,9 +384,6 @@ X Read, Edit, Write (workers only)
 X Processing comments yourself
 X Spawning workers ONE BY ONE
 X Asking "should I start?"
-X Using TaskList as sole completion check (ALWAYS validate with pr_get_work_status)
-X Trusting Task status over MCP status (MCP is source of truth)
-X Blocking on TaskCreate/TaskUpdate failures (they are optional)
 X Skipping MCP final validation in Step 7
 \`\`\`
 `;
@@ -766,7 +734,41 @@ function generateSinglePRPrompt(context: PromptContext): string {
     ? ` (auto-detected from branch \`${sanitizePromptValue(autoDetectedBranch)}\`)`
     : '';
 
-  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  return `[DELEGATION: background-sonnet]
+
+## PARENT: Create Tasks, Delegate, Sweep
+
+**1. Create these tasks NOW** (TaskCreate in YOUR context):
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Run preflight checks | Running preflight checks |
+| 2 | Wait for AI agent reviews | Waiting for AI reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Run build and tests | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately.
+
+**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
+
+**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
+
+| currentPhase | Action |
+|-------------|--------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | All completed |
+| error, aborted | Current task stays, report error detail |
+
+React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
+
+---
+
+## ORCHESTRATOR PROMPT
+
+[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
 **${statusLine}**${activeWarning}
@@ -785,7 +787,41 @@ function generateBatchPrompt(context: PromptContext): string {
 
   const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
-  return `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  return `[DELEGATION: background-sonnet]
+
+## PARENT: Create Tasks, Delegate, Sweep
+
+**1. Create these tasks NOW** (TaskCreate in YOUR context):
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Run preflight checks | Running preflight checks |
+| 2 | Wait for AI agent reviews | Waiting for AI reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Run build and tests | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately.
+
+**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
+
+**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
+
+| currentPhase | Action |
+|-------------|--------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | All completed |
+| error, aborted | Current task stays, report error detail |
+
+React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
+
+---
+
+## ORCHESTRATOR PROMPT
+
+[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
 **Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
