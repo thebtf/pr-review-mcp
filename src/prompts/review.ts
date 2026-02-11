@@ -378,10 +378,14 @@ pr_get { owner, repo, pr, id: threadId }
 \`\`\`
 - Read the comment, understand the issue
 - Fix the code using Edit/Write tools
-- Resolve:
+- **MANDATORY:** Always call pr_resolve for every processed comment:
 \`\`\`
 pr_resolve { owner, repo, pr, threadId }
 \`\`\`
+
+**IMPORTANT:** Call pr_resolve regardless of canResolve value.
+The server handles synthetic comments, Qodo issues, and permission errors internally.
+If permission error occurs, report in pr_report_progress errors array.
 
 ### 3. REPORT
 \`\`\`
@@ -399,6 +403,7 @@ Return to Step 1 (claim next partition).
 ## Rules
 - NO questions, NO confirmations
 - Process ALL comments in partition before reporting
+- **ALWAYS call pr_resolve for each processed comment (mandatory)**
 - If unsure about fix, make minimal safe change
 - Before EXIT: run build command if you modified code
 \`\`\`
@@ -420,7 +425,9 @@ Poll \`pr_get_work_status\` every 15s. Check progress.pending, progress.claimed,
 pr_get_work_status {}
 \`\`\`
 - Confirms all partitions complete (\`progress.pending === 0 && progress.claimed === 0\`)
-- If not complete → continue monitoring
+- **Check progress.failed:** If any workers reported resolution failures, investigate
+- If partitions remain unclaimed/pending → continue monitoring
+- If all complete and no failures → proceed to Step 8
 
 ### Step 8: BUILD & TEST
 \`\`\`
