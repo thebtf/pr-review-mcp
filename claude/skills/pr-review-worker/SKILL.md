@@ -10,7 +10,7 @@ user-invocable: false
 disable-model-invocation: true
 allowed-tools:
   - Bash
-  # NOTE: TaskUpdate/TaskList NOT available in background subagents (platform limitation)
+  # NOTE: TaskUpdate/TaskList may not work in Claude Code 2.1 (try if needed - forward-compatible)
   - mcp__pr__pr_claim_work
   - mcp__pr__pr_list
   - mcp__pr__pr_get

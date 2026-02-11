@@ -355,8 +355,9 @@ Then start processing. Claim partitions, fix comments, resolve threads.
 Do NOT ask questions. Work autonomously until no_work.
 If MCP tool call fails with "unknown tool" (after compaction), re-run MCPSearch and retry once.
 
-NOTE: Workers CANNOT use TaskCreate/TaskUpdate/TaskList (platform limitation for background subagents).
-Task UI updates are handled by the orchestrator based on pr_get_work_status data.
+NOTE: TaskCreate/TaskUpdate/TaskList may not work in background agents (Claude Code 2.1 limitation).
+If TaskUpdate succeeds, great! If not, orchestrator handles progress tracking via MCP polling.
+This is forward-compatible - when platform supports it, tasks will update automatically.
 ```
 
 **CRITICAL: Send ALL Task calls in ONE message to run in parallel.**
@@ -394,7 +395,7 @@ For each file in status.completedFiles (not yet marked):
   If found: TaskUpdate(taskId, status: "completed")
 ```
 
-**Workers CANNOT update Tasks** (platform limitation for background subagents).
+**Task updates by workers:** May not work in Claude Code 2.1 (background agent isolation), but try anyway - forward-compatible for future versions.
 
 Decision on each poll:
 - All partitions done (`pending === 0`) → proceed to **MCP final validation** (below)
