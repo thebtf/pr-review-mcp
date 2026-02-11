@@ -123,8 +123,79 @@ interface PromptContext {
 }
 
 // ============================================================================
-// Orchestrator Workflow Template
+// Prompt Templates
 // ============================================================================
+
+/**
+ * Delegation wrapper — parent creates tasks, spawns background agent, sweeps progress.
+ * Used by pr:review (foreground monitoring mode).
+ */
+const DELEGATION_HEADER = `[DELEGATION: background-sonnet]
+
+## PARENT: Create Tasks, Delegate, Sweep
+
+**1. Create these tasks NOW** (TaskCreate in YOUR context):
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Run preflight checks | Running preflight checks |
+| 2 | Wait for AI agent reviews | Waiting for AI reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Run build and tests | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately.
+
+**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
+
+**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
+
+| currentPhase | Action |
+|-------------|--------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | All completed |
+| error, aborted | Current task stays, report error detail |
+
+React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
+
+---
+
+## ORCHESTRATOR PROMPT
+`;
+
+/**
+ * Self-managed task progress — orchestrator creates and updates its own tasks.
+ * Used by pr:review-background (fire-and-forget mode).
+ */
+const SELF_MANAGED_TASKS = `
+## SELF-MANAGED PROGRESS
+
+**FIRST ACTION — Before any workflow step, create these tasks (TaskCreate):**
+
+| # | Subject | ActiveForm |
+|---|---------|------------|
+| 1 | Preflight & escape check | Running preflight checks |
+| 2 | Invoke & wait for AI agents | Waiting for AI agent reviews |
+| 3 | Process review comments | Processing review comments |
+| 4 | Build & test | Running build and tests |
+
+Mark task 1 as \`in_progress\` immediately after creation.
+
+**Update tasks at each phase transition:**
+
+| Phase reached | Task Action |
+|---------------|-------------|
+| escape_check, preflight, label | Task 1 in_progress |
+| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
+| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
+| build_test | Task 3 completed, Task 4 in_progress |
+| complete | Task 4 completed |
+| error, aborted | Current task: update description with error detail |
+
+---
+`;
 
 const ORCHESTRATOR_WORKFLOW = `
 ## EXECUTION MODE: AUTONOMOUS
@@ -423,6 +494,36 @@ export async function generateReviewPrompt(
 }
 
 /**
+ * Generate the background review prompt — fire-and-forget with self-managed TaskList.
+ * Same context building as pr:review, but no delegation wrapper.
+ */
+export async function generateBackgroundReviewPrompt(
+  args: ReviewPromptArgs,
+  client: GitHubClient
+): Promise<string> {
+  const context = await buildContext(args, client);
+
+  // Same edge cases as pr:review
+  if (context.branchMismatch) {
+    return generateBranchMismatchPrompt(context);
+  }
+
+  if (context.inferRepo) {
+    return generateInferRepoPrompt(context);
+  }
+
+  if (context.targets.length === 0) {
+    return generateNoTargetsPrompt(args);
+  }
+
+  if (context.targets.length === 1) {
+    return generateSinglePRPrompt(context, false);
+  }
+
+  return generateBatchPrompt(context, false);
+}
+
+/**
  * Normalize arguments - parse URL or short format if provided
  */
 function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string; pr?: number; prNumberOnly?: boolean } {
@@ -715,9 +816,10 @@ To review a specific PR, provide the PR number: \`/pr:review 4\``;
 }
 
 /**
- * Generate prompt for single PR
+ * Generate prompt for single PR.
+ * @param delegation - true: parent delegates + monitors (pr:review), false: self-managed tasks (pr:review-background)
  */
-function generateSinglePRPrompt(context: PromptContext): string {
+function generateSinglePRPrompt(context: PromptContext, delegation: boolean = true): string {
   const target = context.targets[0];
   const { currentSummary, workStatus, desiredWorkers, envConfig, autoDetectedBranch } = context;
 
@@ -734,41 +836,7 @@ function generateSinglePRPrompt(context: PromptContext): string {
     ? ` (auto-detected from branch \`${sanitizePromptValue(autoDetectedBranch)}\`)`
     : '';
 
-  return `[DELEGATION: background-sonnet]
-
-## PARENT: Create Tasks, Delegate, Sweep
-
-**1. Create these tasks NOW** (TaskCreate in YOUR context):
-
-| # | Subject | ActiveForm |
-|---|---------|------------|
-| 1 | Run preflight checks | Running preflight checks |
-| 2 | Wait for AI agent reviews | Waiting for AI reviews |
-| 3 | Process review comments | Processing review comments |
-| 4 | Run build and tests | Running build and tests |
-
-Mark task 1 as \`in_progress\` immediately.
-
-**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
-
-**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
-
-| currentPhase | Action |
-|-------------|--------|
-| escape_check, preflight, label | Task 1 in_progress |
-| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
-| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
-| build_test | Task 3 completed, Task 4 in_progress |
-| complete | All completed |
-| error, aborted | Current task stays, report error detail |
-
-React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
-
----
-
-## ORCHESTRATOR PROMPT
-
-[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  const orchestratorContent = `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Target:** ${target.owner}/${target.repo}#${target.pr}${branchIndicator}
 **${statusLine}**${activeWarning}
@@ -777,51 +845,26 @@ React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_c
 ---
 
 ${ORCHESTRATOR_WORKFLOW}`;
+
+  if (delegation) {
+    return `${DELEGATION_HEADER}
+${orchestratorContent}`;
+  }
+
+  return `${SELF_MANAGED_TASKS}
+${orchestratorContent}`;
 }
 
 /**
- * Generate prompt for batch processing
+ * Generate prompt for batch processing.
+ * @param delegation - true: parent delegates + monitors (pr:review), false: self-managed tasks (pr:review-background)
  */
-function generateBatchPrompt(context: PromptContext): string {
+function generateBatchPrompt(context: PromptContext, delegation: boolean = true): string {
   const { targets, desiredWorkers, envConfig } = context;
 
   const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
-  return `[DELEGATION: background-sonnet]
-
-## PARENT: Create Tasks, Delegate, Sweep
-
-**1. Create these tasks NOW** (TaskCreate in YOUR context):
-
-| # | Subject | ActiveForm |
-|---|---------|------------|
-| 1 | Run preflight checks | Running preflight checks |
-| 2 | Wait for AI agent reviews | Waiting for AI reviews |
-| 3 | Process review comments | Processing review comments |
-| 4 | Run build and tests | Running build and tests |
-
-Mark task 1 as \`in_progress\` immediately.
-
-**2. Spawn background sonnet agent** with the ORCHESTRATOR PROMPT section below.
-
-**3. On EVERY agent progress notification**, call \`pr_progress_check\` and update tasks:
-
-| currentPhase | Action |
-|-------------|--------|
-| escape_check, preflight, label | Task 1 in_progress |
-| invoke_agents, poll_wait | Task 1 completed, Task 2 in_progress |
-| spawn_workers, monitor | Task 2 completed, Task 3 in_progress |
-| build_test | Task 3 completed, Task 4 in_progress |
-| complete | All completed |
-| error, aborted | Current task stays, report error detail |
-
-React to each \`Agent ... progress:\` system reminder by calling \`pr_progress_check\` and updating tasks per the table above. This keeps Task UI in sync with the background agent in real time.
-
----
-
-## ORCHESTRATOR PROMPT
-
-[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
+  const orchestratorContent = `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
 **Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
@@ -831,6 +874,14 @@ Process ${envConfig.mode === 'parallel' ? 'in parallel' : 'sequentially'}, start
 ---
 
 ${ORCHESTRATOR_WORKFLOW}`;
+
+  if (delegation) {
+    return `${DELEGATION_HEADER}
+${orchestratorContent}`;
+  }
+
+  return `${SELF_MANAGED_TASKS}
+${orchestratorContent}`;
 }
 
 // ============================================================================
@@ -841,6 +892,24 @@ export const REVIEW_PROMPT_DEFINITION = {
   name: 'review',
   title: 'PR Review Orchestrator',
   description: 'Autonomous multi-agent PR review. Process all comments until ready for merge.',
+  arguments: [
+    {
+      name: 'pr',
+      description: 'PR number, GitHub URL (https://github.com/owner/repo/pull/123), or short format (owner/repo#123). Omit to process all open PRs.',
+      required: false
+    },
+    {
+      name: 'workers',
+      description: 'Number of parallel workers (default: 3)',
+      required: false
+    }
+  ]
+};
+
+export const BACKGROUND_REVIEW_PROMPT_DEFINITION = {
+  name: 'review-background',
+  title: 'Background PR Review',
+  description: 'Fire-and-forget autonomous PR review. Self-manages TaskList progress — tasks spin automatically while your session stays free. Check progress passively via TaskList or actively via pr_progress_check.',
   arguments: [
     {
       name: 'pr',

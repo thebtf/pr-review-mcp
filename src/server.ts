@@ -54,7 +54,9 @@ import {
 import { getInvokableAgentIds } from './agents/registry.js';
 import {
   generateReviewPrompt,
+  generateBackgroundReviewPrompt,
   REVIEW_PROMPT_DEFINITION,
+  BACKGROUND_REVIEW_PROMPT_DEFINITION,
   type ReviewPromptArgs
 } from './prompts/review.js';
 import {
@@ -118,6 +120,11 @@ export class PRReviewMCPServer {
             arguments: REVIEW_PROMPT_DEFINITION.arguments
           },
           {
+            name: BACKGROUND_REVIEW_PROMPT_DEFINITION.name,
+            description: BACKGROUND_REVIEW_PROMPT_DEFINITION.description,
+            arguments: BACKGROUND_REVIEW_PROMPT_DEFINITION.arguments
+          },
+          {
             name: SETUP_PROMPT_DEFINITION.name,
             description: SETUP_PROMPT_DEFINITION.description,
             arguments: SETUP_PROMPT_DEFINITION.arguments
@@ -130,7 +137,13 @@ export class PRReviewMCPServer {
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      if (name === 'review') {
+      // Review prompts share the same args shape, differ only in generator
+      const reviewGenerators: Record<string, typeof generateReviewPrompt> = {
+        'review': generateReviewPrompt,
+        'review-background': generateBackgroundReviewPrompt
+      };
+
+      if (reviewGenerators[name]) {
         const promptArgs: ReviewPromptArgs = {
           owner: args?.owner as string | undefined,
           repo: args?.repo as string | undefined,
@@ -138,7 +151,7 @@ export class PRReviewMCPServer {
           workers: args?.workers as string | undefined
         };
 
-        const promptText = await generateReviewPrompt(promptArgs, this.githubClient);
+        const promptText = await reviewGenerators[name](promptArgs, this.githubClient);
 
         return {
           messages: [
