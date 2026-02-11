@@ -5,7 +5,7 @@
 
 export type Severity = 'CRIT' | 'MAJOR' | 'MINOR' | 'TRIVIAL' | 'ISSUE' | 'REFACTOR' | 'NITPICK' | 'DOCS' | 'N/A';
 export type IssueType = 'issue' | 'refactor' | 'nitpick' | 'docs' | 'other';
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'unknown';
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'greptile' | 'unknown';
 
 export interface SeverityResult {
   severity: Severity;
@@ -78,12 +78,15 @@ export const SEVERITY_ICONS: Record<Severity, string> = {
 export function detectSource(body: string | null | undefined, author?: string): CommentSource {
   if (!body) return 'unknown';
 
-  // Check author first (most reliable for Copilot and Sourcery)
+  // Check author first (most reliable for Copilot, Sourcery, and Greptile)
   if (author === 'copilot-pull-request-reviewer' || author === 'github-copilot') {
     return 'copilot';
   }
   if (author === 'sourcery-ai' || author === 'sourcery-ai-experiments') {
     return 'sourcery';
+  }
+  if (author === 'greptile-apps' || author === 'greptile') {
+    return 'greptile';
   }
 
   // CodeRabbit markers
@@ -99,6 +102,11 @@ export function detectSource(body: string | null | undefined, author?: string): 
   // Codex markers (shields.io badges + feedback prompt)
   if (body.includes('img.shields.io/badge/P') || body.includes('Useful? React with')) {
     return 'codex';
+  }
+
+  // Greptile markers
+  if (body.includes('Greptile Overview') || body.includes('Confidence Score:')) {
+    return 'greptile';
   }
 
   return 'unknown';

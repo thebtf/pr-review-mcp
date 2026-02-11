@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { GitHubClient } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
+import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
 import { stateManager } from '../coordination/state.js';
 import type { SummaryInput, SummaryOutput } from '../github/types.js';
@@ -27,10 +28,11 @@ export async function prSummary(
   const validated = SummaryInputSchema.parse(input);
   const { owner, repo, pr } = validated;
 
-  // Fetch review threads, Qodo review, tracker resolved status, and nitpicks count in parallel
-  const [threadsResult, qodoReview, trackerResolved, resolvedNitpicksCount] = await Promise.all([
+  // Fetch review threads, Qodo/Greptile reviews, tracker resolved status, and nitpicks count in parallel
+  const [threadsResult, qodoReview, greptileReview, trackerResolved, resolvedNitpicksCount] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { maxItems: 1000 }),
     fetchQodoReview(owner, repo, pr),
+    fetchGreptileReview(owner, repo, pr),
     getTrackerResolvedMap(owner, repo, pr),
     stateManager.getResolvedNitpicksCount({ owner, repo, pr })
   ]);
@@ -57,10 +59,15 @@ export async function prSummary(
     trackerResolved.get(qc.id) ?? false
   ).length;
 
+  // Get Greptile comments (can't be resolved via API)
+  const greptileComments = greptileReview ? greptileToNormalizedComments(greptileReview) : [];
+  const greptileCount = greptileComments.length;
+
   // Combine all comments for stats
   const allUnresolved = [
     ...comments.filter(c => !c.resolved),
-    ...unresolvedQodo
+    ...unresolvedQodo,
+    ...greptileComments  // Greptile comments are always unresolved
   ];
 
   const bySeverity: Record<string, number> = {};
@@ -75,7 +82,7 @@ export async function prSummary(
 
   return {
     pr: `${owner}/${repo}#${pr}`,
-    total: totalCount + qodoCount,
+    total: totalCount + qodoCount + greptileCount,
     resolved: comments.filter(c => c.resolved).length + resolvedQodoCount,
     unresolved: allUnresolved.length,
     outdated: comments.filter(c => c.outdated).length,

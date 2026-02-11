@@ -27,7 +27,7 @@ export interface AgentConfig {
   authorPattern: string | string[];
 }
 
-export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex' | 'copilot';
+export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex' | 'copilot' | 'greptile';
 export type ReviewMode = 'sequential' | 'parallel';
 
 // ============================================================================
@@ -81,6 +81,13 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     supports: [],
     authorPattern: 'copilot-pull-request-reviewer',
   },
+  greptile: {
+    name: 'Greptile',
+    command: '@greptile review',
+    type: 'mention',
+    supports: ['focus'],
+    authorPattern: 'greptile',
+  },
 };
 
 /**
@@ -93,6 +100,7 @@ export const PARSABLE_SOURCES = [
   'gemini',
   'copilot',
   'codex',
+  'greptile',
 ] as const;
 
 export type ParsableSource = typeof PARSABLE_SOURCES[number];

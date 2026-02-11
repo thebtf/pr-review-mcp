@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
+import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import type { GetInput, GetOutput } from '../github/types.js';
 
 export const GetInputSchema = z.object({
@@ -25,10 +26,11 @@ export async function prGet(
   const validated = GetInputSchema.parse(input);
   const { owner, repo, pr, id } = validated;
 
-  // Fetch both review threads and Qodo comments in parallel
-  const [threadsResult, qodoReview] = await Promise.all([
+  // Fetch review threads, Qodo, and Greptile comments in parallel
+  const [threadsResult, qodoReview, greptileReview] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { maxItems: 1000 }),
-    fetchQodoReview(owner, repo, pr)
+    fetchQodoReview(owner, repo, pr),
+    fetchGreptileReview(owner, repo, pr)
   ]);
 
   const { comments } = threadsResult;
@@ -62,6 +64,31 @@ export async function prGet(
         aiPrompt: null,
         replies: [],
         canResolve: false // Qodo comments can't be resolved via API
+      };
+    }
+  }
+
+  // If not found, check Greptile comments
+  if (!comment && greptileReview) {
+    const greptileComments = greptileToNormalizedComments(greptileReview);
+    const greptileComment = greptileComments.find(gc =>
+      gc.id === id || gc.id.endsWith(id)
+    );
+
+    if (greptileComment) {
+      // Return Greptile comment in GetOutput format
+      return {
+        id: greptileComment.id,
+        threadId: greptileComment.id, // Greptile issue comments don't have threads
+        file: greptileComment.file || '',
+        line: greptileComment.line ?? '?',
+        severity: greptileComment.severity,
+        source: 'greptile',
+        title: greptileComment.title,
+        body: greptileComment.body,
+        aiPrompt: null,
+        replies: [],
+        canResolve: false // Greptile issue comments can't be resolved via API
       };
     }
   }
