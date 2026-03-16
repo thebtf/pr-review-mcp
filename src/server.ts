@@ -86,6 +86,7 @@ export class PRReviewMCPServer {
           prompts: {},
           logging: {},
           resources: {},
+          experimental: { 'x-mux': { sharing: 'shared', stateless: true } },
         },
       }
     );
