@@ -133,49 +133,49 @@ export class PRReviewMCPServer {
 
   /**
    * Request user confirmation via MCP elicitation.
-   * Returns true if user accepts, false if client doesn't support elicitation.
-   * Throws McpError if user declines or cancels.
+   * Returns true if user accepts with confirm=true, false if client doesn't
+   * support elicitation (capability not declared). Throws if user declines/cancels.
    */
-  private static async elicitConfirmation(
+  private async elicitConfirmation(
     message: string,
     extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
   ): Promise<boolean> {
-    try {
-      const result = await extra.sendRequest(
-        {
-          method: 'elicitation/create' as const,
-          params: {
-            message,
-            requestedSchema: {
-              type: 'object' as const,
-              properties: {
-                confirm: {
-                  type: 'boolean' as const,
-                  title: 'Confirm',
-                  default: false,
-                },
+    // Check client capabilities before attempting elicitation
+    const capabilities = this.mcpServer.server.getClientCapabilities();
+    if (!capabilities?.elicitation) {
+      return false; // Client doesn't support elicitation
+    }
+
+    const result = await extra.sendRequest(
+      {
+        method: 'elicitation/create' as const,
+        params: {
+          message,
+          requestedSchema: {
+            type: 'object' as const,
+            properties: {
+              confirm: {
+                type: 'boolean' as const,
+                title: 'Confirm',
+                default: false,
               },
-              required: ['confirm'],
             },
+            required: ['confirm'],
           },
         },
-        ElicitResultSchema,
-      );
+      },
+      ElicitResultSchema,
+    );
 
-      if (result.action === 'decline' || result.action === 'cancel') {
-        throw new StructuredError('permission', 'Operation cancelled by user', false);
-      }
-      // Validate the user actually set confirm=true in the form
-      if (result.action === 'accept') {
-        const content = result.content as Record<string, unknown> | undefined;
-        return content?.confirm === true;
-      }
-      return false;
-    } catch (error) {
-      // Client doesn't support elicitation — fall through to confirm param
-      if (error instanceof StructuredError) throw error;
-      return false;
+    if (result.action === 'decline' || result.action === 'cancel') {
+      throw new StructuredError('permission', 'Operation cancelled by user', false);
     }
+    // Validate the user actually set confirm=true in the form
+    if (result.action === 'accept') {
+      const content = result.content as Record<string, unknown> | undefined;
+      return content?.confirm === true;
+    }
+    return false;
   }
 
   /** Wrap tool result as MCP text content */
@@ -324,7 +324,7 @@ export class PRReviewMCPServer {
       try {
         // Try elicitation first, fall back to confirm param
         if (!args.confirm) {
-          const confirmed = await PRReviewMCPServer.elicitConfirmation(
+          const confirmed = await this.elicitConfirmation(
             `Merge PR #${args.pr} in ${args.owner}/${args.repo} via ${args.method ?? 'squash'}?`,
             extra,
           );
@@ -378,7 +378,7 @@ export class PRReviewMCPServer {
     }, async (args, extra) => {
       try {
         if (!args.confirm) {
-          const confirmed = await PRReviewMCPServer.elicitConfirmation(
+          const confirmed = await this.elicitConfirmation(
             'Reset the current coordination run? This will clear all partition state.',
             extra,
           );
