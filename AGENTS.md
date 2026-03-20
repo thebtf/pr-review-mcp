@@ -142,8 +142,12 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 # Build
 npm run build
 
-# Run server (stdio)
+# Run server (stdio, default)
 node dist/index.js
+
+# Run server (HTTP, StreamableHTTP on port 3000)
+node dist/index.js --http
+node dist/index.js --http 8080
 
 # Test with MCP Inspector
 npx @modelcontextprotocol/inspector node dist/index.js
