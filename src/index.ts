@@ -7,6 +7,10 @@
  * - 4-layer AI prompt extraction
  * - Circuit breaker + rate limiting
  * - Automated workflow prompt
+ *
+ * Transport modes:
+ * - stdio (default): for CLI integrations (Claude Code, MCP Inspector)
+ * - --http [port]: StreamableHTTP server on specified port (default: 3000)
  */
 
 import { createRequire } from 'node:module';
@@ -20,7 +24,19 @@ if (arg === '--version' || arg === '-v' || arg === '-V') {
   process.exit(0);
 }
 
+// Parse transport mode
+let mode: 'stdio' | 'http' = 'stdio';
+let httpPort = 3000;
+
+if (arg === '--http') {
+  mode = 'http';
+  const portArg = process.argv[3];
+  if (portArg && /^\d+$/.test(portArg)) {
+    httpPort = parseInt(portArg, 10);
+  }
+}
+
 const { PRReviewMCPServer } = await import('./server.js');
 
 const server = new PRReviewMCPServer();
-server.run().catch(console.error);
+server.run({ mode, port: httpPort }).catch(console.error);

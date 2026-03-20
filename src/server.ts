@@ -9,8 +9,10 @@
  */
 
 import { createRequire } from 'node:module';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
@@ -395,7 +397,9 @@ export class PRReviewMCPServer {
   // Server lifecycle
   // --------------------------------------------------------------------------
 
-  async run(): Promise<void> {
+  async run(options: { mode?: 'stdio' | 'http'; port?: number } = {}): Promise<void> {
+    const { mode = 'stdio', port = 3000 } = options;
+
     // Check prerequisites — exit early if not met
     try {
       this.githubClient.checkPrerequisites();
@@ -412,8 +416,74 @@ export class PRReviewMCPServer {
       process.exit(1);
     }
 
-    const transport = new StdioServerTransport();
-    await this.mcpServer.connect(transport);
-    console.error('PR Review MCP server running on stdio');
+    if (mode === 'http') {
+      await this.runHttp(port);
+    } else {
+      const transport = new StdioServerTransport();
+      await this.mcpServer.connect(transport);
+      console.error('PR Review MCP server running on stdio');
+    }
+  }
+
+  private async runHttp(port: number): Promise<void> {
+    // Session map: each client session gets its own transport
+    const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+    const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+      // Parse body for POST requests
+      const url = req.url ?? '/';
+
+      if (url === '/mcp' || url === '/') {
+        // Create or reuse transport per session
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+        if (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE') {
+          let transport: StreamableHTTPServerTransport;
+
+          if (sessionId && sessions.has(sessionId)) {
+            transport = sessions.get(sessionId)!;
+          } else {
+            // New session — create transport and connect to McpServer
+            transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => crypto.randomUUID(),
+            });
+
+            transport.onclose = () => {
+              const sid = transport.sessionId;
+              if (sid) sessions.delete(sid);
+            };
+
+            // Connect new transport to server
+            // Note: McpServer supports multiple transports via server.connect()
+            await this.mcpServer.connect(transport);
+
+            if (transport.sessionId) {
+              sessions.set(transport.sessionId, transport);
+            }
+          }
+
+          await transport.handleRequest(req, res);
+        } else {
+          res.writeHead(405, { 'Content-Type': 'text/plain' });
+          res.end('Method Not Allowed');
+        }
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+      }
+    });
+
+    httpServer.listen(port, () => {
+      console.error(`PR Review MCP server running on http://localhost:${port}/mcp`);
+    });
+
+    // Graceful shutdown
+    process.on('SIGINT', () => {
+      for (const transport of sessions.values()) {
+        transport.close();
+      }
+      httpServer.close();
+      process.exit(0);
+    });
   }
 }
