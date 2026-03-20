@@ -16,6 +16,28 @@ export const GetInputSchema = z.object({
   id: z.string().min(1, 'Comment ID is required')
 });
 
+export const GetOutputSchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  file: z.string(),
+  line: z.union([z.number(), z.string()]),
+  severity: z.string(),
+  source: z.string(),
+  title: z.string(),
+  body: z.string(),
+  aiPrompt: z.object({
+    text: z.string(),
+    confidence: z.enum(['high', 'low']),
+  }).nullable(),
+  replies: z.array(z.object({
+    id: z.string(),
+    body: z.string(),
+    author: z.string(),
+    createdAt: z.string().optional(),
+  })),
+  canResolve: z.boolean(),
+});
+
 /**
  * Get detailed information about a specific comment
  */

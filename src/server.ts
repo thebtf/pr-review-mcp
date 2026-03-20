@@ -18,9 +18,9 @@ import { logger } from './logging.js';
 import { toMcpError } from './tools/shared.js';
 
 // Tool handlers and schemas
-import { prSummary, SummaryInputSchema } from './tools/summary.js';
-import { prList, ListInputSchema } from './tools/list.js';
-import { prGet, GetInputSchema } from './tools/get.js';
+import { prSummary, SummaryInputSchema, SummaryOutputSchema } from './tools/summary.js';
+import { prList, ListInputSchema, ListOutputSchema } from './tools/list.js';
+import { prGet, GetInputSchema, GetOutputSchema } from './tools/get.js';
 import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
 import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
@@ -121,6 +121,14 @@ export class PRReviewMCPServer {
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   }
 
+  /** Wrap tool result with both text content and structuredContent for outputSchema tools */
+  private static structuredResult(data: object): CallToolResult {
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+      structuredContent: data as Record<string, unknown>,
+    };
+  }
+
   // --------------------------------------------------------------------------
   // Tool registration
   // --------------------------------------------------------------------------
@@ -134,9 +142,10 @@ export class PRReviewMCPServer {
       title: 'Get PR Review Statistics',
       description: 'Get PR review statistics: total, resolved, unresolved counts by severity and file',
       inputSchema: SummaryInputSchema,
+      outputSchema: SummaryOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prSummary(args, client)); }
+      try { return PRReviewMCPServer.structuredResult(await prSummary(args, client)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -154,9 +163,10 @@ export class PRReviewMCPServer {
       title: 'List PR Review Comments',
       description: 'List PR review comments with optional filtering by resolved/file/severity',
       inputSchema: ListInputSchema,
+      outputSchema: ListOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prList(args, client)); }
+      try { return PRReviewMCPServer.structuredResult(await prList(args, client)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -164,9 +174,10 @@ export class PRReviewMCPServer {
       title: 'Get Detailed Comment Information',
       description: 'Get detailed comment information including full body and AI prompt',
       inputSchema: GetInputSchema,
+      outputSchema: GetOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prGet(args, client)); }
+      try { return PRReviewMCPServer.structuredResult(await prGet(args, client)); }
       catch (e) { throw toMcpError(e); }
     });
 
