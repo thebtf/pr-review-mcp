@@ -433,48 +433,73 @@ export class PRReviewMCPServer {
   private async runHttp(port: number): Promise<void> {
     // Session map: each client session gets its own transport
     const sessions = new Map<string, StreamableHTTPServerTransport>();
+    const sessionLastSeen = new Map<string, number>();
+    const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+    // Periodic cleanup of stale sessions (disconnected without proper close)
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [sid, lastSeen] of sessionLastSeen) {
+        if (now - lastSeen > SESSION_TIMEOUT_MS) {
+          const transport = sessions.get(sid);
+          if (transport) transport.close();
+          sessions.delete(sid);
+          sessionLastSeen.delete(sid);
+        }
+      }
+    }, 60_000);
+    cleanupInterval.unref(); // Don't prevent process exit
 
     this.httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-      // Parse body for POST requests
-      const url = req.url ?? '/';
+      try {
+        const url = req.url ?? '/';
 
-      if (url === '/mcp' || url === '/') {
-        // Create or reuse transport per session
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        if (url === '/mcp' || url === '/') {
+          const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-        if (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE') {
-          let transport: StreamableHTTPServerTransport;
+          if (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE') {
+            let transport: StreamableHTTPServerTransport;
 
-          if (sessionId && sessions.has(sessionId)) {
-            transport = sessions.get(sessionId)!;
-          } else {
-            // New session — create transport and connect to McpServer
-            transport = new StreamableHTTPServerTransport({
-              sessionIdGenerator: () => randomUUID(),
-            });
+            if (sessionId && sessions.has(sessionId)) {
+              transport = sessions.get(sessionId)!;
+              sessionLastSeen.set(sessionId, Date.now());
+            } else {
+              // New session — create transport and connect to McpServer
+              transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: () => randomUUID(),
+              });
 
-            transport.onclose = () => {
-              const sid = transport.sessionId;
-              if (sid) sessions.delete(sid);
-            };
+              transport.onclose = () => {
+                const sid = transport.sessionId;
+                if (sid) {
+                  sessions.delete(sid);
+                  sessionLastSeen.delete(sid);
+                }
+              };
 
-            // Connect new transport to server
-            // Note: McpServer supports multiple transports via server.connect()
-            await this.mcpServer.connect(transport);
+              await this.mcpServer.connect(transport);
 
-            if (transport.sessionId) {
-              sessions.set(transport.sessionId, transport);
+              if (transport.sessionId) {
+                sessions.set(transport.sessionId, transport);
+                sessionLastSeen.set(transport.sessionId, Date.now());
+              }
             }
-          }
 
-          await transport.handleRequest(req, res);
+            await transport.handleRequest(req, res);
+          } else {
+            res.writeHead(405, { 'Content-Type': 'text/plain' });
+            res.end('Method Not Allowed');
+          }
         } else {
-          res.writeHead(405, { 'Content-Type': 'text/plain' });
-          res.end('Method Not Allowed');
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
         }
-      } else {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Not Found');
+      } catch (error) {
+        logger.error('HTTP request handler error', error);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        }
       }
     });
 

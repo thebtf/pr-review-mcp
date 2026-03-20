@@ -51,7 +51,7 @@ function toGetOutput(comment: import('../github/types.js').ProcessedComment): Ge
     body: comment.fullBody,
     aiPrompt: comment.aiPrompt ? {
       text: comment.aiPrompt,
-      confidence: comment.aiPromptConfidence as 'high' | 'low'
+      confidence: comment.aiPromptConfidence === 'absent' ? 'low' : comment.aiPromptConfidence
     } : null,
     replies: comment.replies,
     canResolve: comment.canResolve
