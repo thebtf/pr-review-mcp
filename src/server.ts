@@ -152,7 +152,6 @@ export class PRReviewMCPServer {
                 confirm: {
                   type: 'boolean' as const,
                   title: 'Confirm',
-                  description: message,
                   default: false,
                 },
               },
@@ -163,9 +162,13 @@ export class PRReviewMCPServer {
         ElicitResultSchema,
       );
 
-      if (result.action === 'accept') return true;
       if (result.action === 'decline' || result.action === 'cancel') {
         throw new StructuredError('permission', 'Operation cancelled by user', false);
+      }
+      // Validate the user actually set confirm=true in the form
+      if (result.action === 'accept') {
+        const content = result.content as Record<string, unknown> | undefined;
+        return content?.confirm === true;
       }
       return false;
     } catch (error) {
@@ -330,7 +333,7 @@ export class PRReviewMCPServer {
               'Confirmation required: set confirm=true or approve the elicitation prompt', false);
           }
         }
-        return PRReviewMCPServer.textResult(await prMerge({ ...args, confirm: true as const }));
+        return PRReviewMCPServer.textResult(await prMerge({ ...args, confirm: true }));
       } catch (e) { throw toMcpError(e); }
     });
 
