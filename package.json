@@ -9,7 +9,11 @@
   },
   "files": [
     "dist",
+    ".claude-plugin",
+    ".mcp.json",
+    "commands",
     "README.md",
+    "README.ru.md",
     "LICENSE"
   ],
   "scripts": {
@@ -23,12 +27,20 @@
   },
   "keywords": [
     "mcp",
+    "claude-code-plugin",
     "coderabbit",
+    "gemini",
+    "copilot",
+    "sourcery",
+    "qodo",
+    "greptile",
     "github",
     "pr-review",
     "code-review",
     "model-context-protocol",
-    "graphql"
+    "graphql",
+    "multi-agent",
+    "orchestration"
   ],
   "author": "thebtf",
   "license": "MIT",
