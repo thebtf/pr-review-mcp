@@ -77,6 +77,7 @@ const pkg = require('../package.json');
 export class PRReviewMCPServer {
   private mcpServer: McpServer;
   private githubClient: GitHubClient;
+  private httpServer?: import('node:http').Server;
 
   constructor() {
     this.mcpServer = new McpServer(
@@ -111,6 +112,9 @@ export class PRReviewMCPServer {
     };
 
     process.on('SIGINT', async () => {
+      if (this.httpServer) {
+        this.httpServer.close();
+      }
       await this.mcpServer.close();
       process.exit(0);
     });
@@ -429,7 +433,7 @@ export class PRReviewMCPServer {
     // Session map: each client session gets its own transport
     const sessions = new Map<string, StreamableHTTPServerTransport>();
 
-    const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    this.httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       // Parse body for POST requests
       const url = req.url ?? '/';
 
@@ -473,17 +477,8 @@ export class PRReviewMCPServer {
       }
     });
 
-    httpServer.listen(port, () => {
+    this.httpServer.listen(port, () => {
       console.error(`PR Review MCP server running on http://localhost:${port}/mcp`);
-    });
-
-    // Graceful shutdown
-    process.on('SIGINT', () => {
-      for (const transport of sessions.values()) {
-        transport.close();
-      }
-      httpServer.close();
-      process.exit(0);
     });
   }
 }
