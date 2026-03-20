@@ -35,20 +35,44 @@ export async function prGet(
 
   const { comments } = threadsResult;
 
-  // Find by comment ID or thread ID (with partial match support)
-  let comment = comments.find(c =>
-    c.id === id ||
-    c.threadId === id ||
-    c.id.endsWith(id) ||
-    c.threadId.endsWith(id)
-  );
+  // Find by comment ID or thread ID (exact match first, then partial)
+  let comment = comments.find(c => c.id === id || c.threadId === id);
+
+  // If no exact match, try suffix match (ensure uniqueness)
+  if (!comment) {
+    const suffixMatches = comments.filter(c =>
+      c.id.endsWith(id) || c.threadId.endsWith(id)
+    );
+    if (suffixMatches.length === 1) {
+      comment = suffixMatches[0];
+    } else if (suffixMatches.length > 1) {
+      throw new StructuredError(
+        'parse',
+        `ID "${id}" matches multiple comments. Use full ID for exact match.`,
+        false
+      );
+    }
+  }
 
   // If not found in review threads, check Qodo comments
   if (!comment && qodoReview) {
     const qodoComments = qodoToNormalizedComments(qodoReview);
-    const qodoComment = qodoComments.find(qc =>
-      qc.id === id || qc.id.endsWith(id)
-    );
+    // Try exact match first
+    let qodoComment = qodoComments.find(qc => qc.id === id);
+
+    // If no exact match, try suffix match (ensure uniqueness)
+    if (!qodoComment) {
+      const qodoSuffixMatches = qodoComments.filter(qc => qc.id.endsWith(id));
+      if (qodoSuffixMatches.length === 1) {
+        qodoComment = qodoSuffixMatches[0];
+      } else if (qodoSuffixMatches.length > 1) {
+        throw new StructuredError(
+          'parse',
+          `ID "${id}" matches multiple Qodo comments. Use full ID for exact match.`,
+          false
+        );
+      }
+    }
 
     if (qodoComment) {
       // Return Qodo comment in GetOutput format
@@ -71,9 +95,22 @@ export async function prGet(
   // If not found, check Greptile comments
   if (!comment && greptileReview) {
     const greptileComments = greptileToNormalizedComments(greptileReview);
-    const greptileComment = greptileComments.find(gc =>
-      gc.id === id || gc.id.endsWith(id)
-    );
+    // Try exact match first
+    let greptileComment = greptileComments.find(gc => gc.id === id);
+
+    // If no exact match, try suffix match (ensure uniqueness)
+    if (!greptileComment) {
+      const greptileSuffixMatches = greptileComments.filter(gc => gc.id.endsWith(id));
+      if (greptileSuffixMatches.length === 1) {
+        greptileComment = greptileSuffixMatches[0];
+      } else if (greptileSuffixMatches.length > 1) {
+        throw new StructuredError(
+          'parse',
+          `ID "${id}" matches multiple Greptile comments. Use full ID for exact match.`,
+          false
+        );
+      }
+    }
 
     if (greptileComment) {
       // Return Greptile comment in GetOutput format

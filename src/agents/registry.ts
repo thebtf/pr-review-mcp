@@ -86,7 +86,7 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     command: '@greptile review',
     type: 'mention',
     supports: ['focus'],
-    authorPattern: 'greptile',
+    authorPattern: 'greptile-apps',
   },
 };
 

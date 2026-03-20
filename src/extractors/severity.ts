@@ -3,9 +3,11 @@
  * Supports multiple sources: CodeRabbit, Gemini Code Assist, Codex, Copilot, Sourcery
  */
 
+import type { CommentSource } from '../github/types.js';
+
 export type Severity = 'CRIT' | 'MAJOR' | 'MINOR' | 'TRIVIAL' | 'ISSUE' | 'REFACTOR' | 'NITPICK' | 'DOCS' | 'N/A';
 export type IssueType = 'issue' | 'refactor' | 'nitpick' | 'docs' | 'other';
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'greptile' | 'unknown';
+export type { CommentSource };
 
 export interface SeverityResult {
   severity: Severity;

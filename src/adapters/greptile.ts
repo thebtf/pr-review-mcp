@@ -80,8 +80,10 @@ async function fetchGreptileComment(
         };
       }
     }
-  } catch {
-    // Return null on error
+  } catch (error) {
+    // Log and return null on error so operators can distinguish failures from "no comment"
+    console.error('[Greptile] Failed to fetch review comments from GitHub', error);
+    return null;
   }
 
   return null;
@@ -100,10 +102,17 @@ function parseGreptileComment(
 
   // Extract confidence score (format: "Confidence Score: X/5")
   const confidenceMatch = body.match(/Confidence Score:\s*(\d)\/5/i);
-  const confidenceScore = confidenceMatch ? parseInt(confidenceMatch[1]) : 3;
+  const rawConfidenceScore = confidenceMatch ? parseInt(confidenceMatch[1], 10) : null;
+  const confidenceScore =
+    rawConfidenceScore !== null && rawConfidenceScore >= 1 && rawConfidenceScore <= 5
+      ? rawConfidenceScore
+      : 3;
 
   // Extract summary (text between "Greptile Summary" and "Critical Issues")
-  const summaryMatch = body.match(/<h3>Greptile Summary<\/h3>\s*([\s\S]*?)(?:<h3>|\*\*Critical Issues|$)/i);
+  // Support both HTML (<h3>) and Markdown (###) headers
+  const summaryMatch = body.match(
+    /(?:<h3>|#{2,3}\s*)Greptile Summary(?:<\/h3>)?\s*([\s\S]*?)(?:<h3>|#{2,3}\s*|\*\*Critical Issues|$)/i
+  );
   const summary = summaryMatch?.[1]
     ?.replace(/<[^>]+>/g, ' ')
     .replace(/\*\*/g, '')
@@ -134,13 +143,14 @@ function parseCriticalIssues(body: string): string[] {
   const issues: string[] = [];
 
   // Find "Critical Issues Found:" section
-  const criticalMatch = body.match(/\*\*Critical Issues Found:\*\*\s*([\s\S]*?)(?:\n\n|\*\*|<h3>)/i);
+  // Support both Markdown headers and bold text
+  const criticalMatch = body.match(/(?:\*\*|##\s*)Critical Issues Found:?\*\*?\s*([\s\S]*?)(?:\n\n|\*\*|<h3>|#{2,3})/i);
   if (!criticalMatch) return issues;
 
   const section = criticalMatch[1];
 
-  // Extract bullet points (lines starting with -)
-  const bulletRegex = /^-\s+(.+)$/gm;
+  // Extract bullet points (lines starting with - or *)
+  const bulletRegex = /^[-*]\s+(.+)$/gm;
   let match;
 
   while ((match = bulletRegex.exec(section)) !== null) {
@@ -169,7 +179,10 @@ function parseImportantFiles(
   const comments: GreptileComment[] = [];
 
   // Find table rows (format: | filename | description |)
-  const tableMatch = body.match(/<h3>Important Files Changed<\/h3>[\s\S]*?<\/summary>([\s\S]*?)<\/details>/i);
+  // Support both HTML (<h3>) and Markdown (###) headers
+  const tableMatch = body.match(
+    /(?:<h3>|#{2,3}\s*)Important Files Changed(?:<\/h3>)?[\s\S]*?(?:<\/summary>)?([\s\S]*?)(?:<\/details>|#{2,3}|$)/i
+  );
   if (!tableMatch) return comments;
 
   const tableContent = tableMatch[1];
