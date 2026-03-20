@@ -109,7 +109,16 @@ async function getConfiguredAgents(
       return { agents: getDefaultAgents() };
     }
 
-    const config: RepoConfig = JSON.parse(content);
+    let config: RepoConfig;
+    try {
+      config = JSON.parse(content);
+    } catch (parseError) {
+      logger.warning('[invoke] Invalid JSON in .github/pr-review.json, using default agents', {
+        error: parseError instanceof Error ? parseError.message : String(parseError),
+      });
+      return { agents: getDefaultAgents() };
+    }
+
     const configuredAgents = config.invoke?.agents || [];
 
     // Filter to only valid invokable agents
@@ -122,7 +131,7 @@ async function getConfiguredAgents(
       defaults: config.invoke?.defaults
     };
   } catch {
-    // Config file doesn't exist or is invalid - use all agents
+    // Config file doesn't exist or network error - use default agents
     return { agents: getDefaultAgents() };
   }
 }
