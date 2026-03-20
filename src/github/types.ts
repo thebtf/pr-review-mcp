@@ -101,7 +101,7 @@ export interface GraphQLResponse<T> {
 }
 
 // Comment source types
-export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'unknown';
+export type CommentSource = 'coderabbit' | 'gemini' | 'codex' | 'copilot' | 'sourcery' | 'qodo' | 'greptile' | 'unknown';
 
 // Processed comment type
 export interface ProcessedComment {

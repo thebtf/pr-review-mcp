@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { GitHubClient } from '../github/client.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
+import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
 import type { ListInput, ListOutput, ListComment } from '../github/types.js';
 
@@ -33,10 +34,11 @@ export async function prList(
   const validated = ListInputSchema.parse(input);
   const { owner, repo, pr, filter = {}, max = 20 } = validated;
 
-  // Fetch review threads, Qodo review, and tracker resolved status in parallel
-  const [threadsResult, qodoReview, trackerResolved] = await Promise.all([
+  // Fetch review threads, Qodo/Greptile reviews, and tracker resolved status in parallel
+  const [threadsResult, qodoReview, greptileReview, trackerResolved] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { filter, maxItems: max }),
     fetchQodoReview(owner, repo, pr),
+    fetchGreptileReview(owner, repo, pr),
     getTrackerResolvedMap(owner, repo, pr)
   ]);
 
@@ -55,34 +57,60 @@ export async function prList(
     hasAiPrompt: c.aiPrompt !== null
   }));
 
+  // Compute Qodo and Greptile comments once
+  const qodoComments = qodoReview ? qodoToNormalizedComments(qodoReview) : [];
+  const greptileComments = greptileReview ? greptileToNormalizedComments(greptileReview) : [];
+
   // Add Qodo comments if available, with resolved status from tracker
-  if (qodoReview) {
-    const qodoComments = qodoToNormalizedComments(qodoReview);
-    for (const qc of qodoComments) {
-      // Get resolved status from tracker (default to false if not tracked)
-      const resolved = trackerResolved.get(qc.id) ?? false;
+  for (const qc of qodoComments) {
+    // Get resolved status from tracker (default to false if not tracked)
+    const resolved = trackerResolved.get(qc.id) ?? false;
 
-      // Apply filters
-      if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
-      if (filter.file && !qc.file.includes(filter.file)) continue;
+    // Apply filters
+    if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
+    if (filter.file && !qc.file.includes(filter.file)) continue;
 
-      listComments.push({
-        id: qc.id,
-        threadId: qc.id, // Qodo doesn't have threads
-        file: qc.file,
-        line: qc.line ?? '?',
-        severity: qc.severity,
-        source: 'qodo',
-        title: qc.title,
-        resolved,
-        hasAiPrompt: false
-      });
-    }
+    listComments.push({
+      id: qc.id,
+      threadId: qc.id, // Qodo doesn't have threads
+      file: qc.file,
+      line: qc.line ?? '?',
+      severity: qc.severity,
+      source: 'qodo',
+      title: qc.title,
+      resolved,
+      hasAiPrompt: false
+    });
   }
+
+  // Add Greptile comments if available
+  for (const gc of greptileComments) {
+    // Greptile issue comments can't be resolved via API
+    const resolved = false;
+
+    // Apply filters
+    if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
+    if (filter.file && gc.file && !gc.file.includes(filter.file)) continue;
+
+    listComments.push({
+      id: gc.id,
+      threadId: gc.id, // Greptile doesn't have threads for issue comments
+      file: gc.file || '',
+      line: gc.line ?? '?',
+      severity: gc.severity,
+      source: 'greptile',
+      title: gc.title,
+      resolved,
+      hasAiPrompt: false
+    });
+  }
+
+  const greptileCount = greptileComments.length;
+  const qodoCount = qodoComments.length;
 
   return {
     comments: listComments,
-    total: totalCount + (qodoReview ? qodoToNormalizedComments(qodoReview).length : 0),
+    total: totalCount + qodoCount + greptileCount,
     hasMore
   };
 }

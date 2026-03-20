@@ -38,7 +38,8 @@ pr-review-mcp/
 │   │   ├── invoke.ts       # pr_invoke tool
 │   │   └── shared.ts       # Shared utilities
 │   ├── adapters/
-│   │   └── qodo.ts         # Qodo issue comment adapter
+│   │   ├── qodo.ts         # Qodo issue comment adapter
+│   │   └── greptile.ts     # Greptile issue comment adapter
 │   ├── agents/
 │   │   ├── registry.ts     # Agent configurations
 │   │   ├── invoker.ts      # Agent invocation logic
@@ -46,9 +47,7 @@ pr-review-mcp/
 │   └── extractors/
 │       ├── severity.ts     # Severity extraction
 │       └── prompt.ts       # AI prompt extraction
-├── dist/                   # Compiled output
-└── .agent/
-    └── skills/             # Submodule: agent-skills
+└── dist/                   # Compiled output
 ```
 
 ---
@@ -90,8 +89,10 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 | Sourcery | Inline reviews | `sourcery-ai[bot]` |
 | Codex | Inline reviews | `chatgpt-codex-connector[bot]` |
 | **Qodo** | **Issue comment** | `qodo-code-review[bot]` |
+| **Greptile** | **Issue comment + inline** | `greptile-code-reviews[bot]` |
 
 ⚠️ Qodo uses a "persistent review" pattern — one issue comment updated on each commit.
+⚠️ Greptile posts an overview issue comment + inline review comments.
 
 ---
 
@@ -132,15 +133,6 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 | **PR ops via MCP only** | **CRITICAL:** All PR operations must go through MCP server, never direct `gh` CLI |
 | **Parallel fetching** | Fetch review threads + Qodo in parallel |
 | **Windows compat** | Use `MSYS_NO_PATHCONV=1` for slash commands |
-
----
-
-## 🔗 SKILLS
-
-Skills are available in `.agent/skills/` submodule. Relevant skills:
-- `pr-review` — PR review workflow
-- `coderabbit` — CodeRabbit integration
-- `debugging` — Debugging strategies
 
 ---
 

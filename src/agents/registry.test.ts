@@ -17,7 +17,7 @@ import {
 
 describe('INVOKABLE_AGENTS', () => {
   it('contains all expected agents', () => {
-    const expectedAgents: InvokableAgentId[] = ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'copilot'];
+    const expectedAgents: InvokableAgentId[] = ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'copilot', 'greptile'];
     for (const agent of expectedAgents) {
       expect(INVOKABLE_AGENTS[agent]).toBeDefined();
     }
@@ -53,6 +53,7 @@ describe('PARSABLE_SOURCES', () => {
     expect(PARSABLE_SOURCES).toContain('gemini');
     expect(PARSABLE_SOURCES).toContain('copilot');
     expect(PARSABLE_SOURCES).toContain('codex');
+    expect(PARSABLE_SOURCES).toContain('greptile');
   });
 });
 
@@ -220,7 +221,7 @@ describe('getAgentConfig', () => {
   });
 
   it('returns config for all valid agents', () => {
-    const agents: InvokableAgentId[] = ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'copilot'];
+    const agents: InvokableAgentId[] = ['coderabbit', 'sourcery', 'qodo', 'gemini', 'codex', 'copilot', 'greptile'];
     for (const id of agents) {
       expect(getAgentConfig(id)).toBeDefined();
     }
@@ -236,6 +237,7 @@ describe('getInvokableAgentIds', () => {
     expect(ids).toContain('gemini');
     expect(ids).toContain('codex');
     expect(ids).toContain('copilot');
+    expect(ids).toContain('greptile');
   });
 
   it('returns array of strings', () => {
@@ -255,6 +257,7 @@ describe('isInvokableAgent', () => {
     expect(isInvokableAgent('gemini')).toBe(true);
     expect(isInvokableAgent('codex')).toBe(true);
     expect(isInvokableAgent('copilot')).toBe(true);
+    expect(isInvokableAgent('greptile')).toBe(true);
   });
 
   it('returns false for invalid agent IDs', () => {
