@@ -9,6 +9,7 @@ import { QUERIES } from '../github/queries.js';
 import type {
   ListThreadsData,
   ListReviewsData,
+  GetThreadData,
   ReviewThread,
   ProcessedComment,
   ProcessedReply,
@@ -173,6 +174,24 @@ export function processThread(thread: ReviewThread): ProcessedComment {
       createdAt: c.createdAt
     }))
   };
+}
+
+/**
+ * Fetch a single thread by its GraphQL node ID.
+ * Returns null if the thread is not found or the ID is not a thread ID.
+ */
+export async function fetchSingleThread(
+  client: GitHubClient,
+  threadId: string
+): Promise<ProcessedComment | null> {
+  try {
+    const data = await client.graphql<GetThreadData>(QUERIES.getThread, { threadId });
+    const thread = data?.node;
+    if (!thread || !thread.comments?.nodes?.length) return null;
+    return processThread(thread);
+  } catch {
+    return null;
+  }
 }
 
 export interface FetchOptions {
