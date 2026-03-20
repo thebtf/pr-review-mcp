@@ -154,6 +154,34 @@ export const QUERIES = {
   `,
 
   /**
+   * Fetch a single review thread by its node ID (for optimized pr_get lookups)
+   */
+  getThread: `
+    query($threadId: ID!) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          id
+          isResolved
+          isOutdated
+          viewerCanResolve
+          path
+          line
+          diffSide
+          comments(first: 50) {
+            nodes {
+              id
+              body
+              createdAt
+              updatedAt
+              author { login }
+            }
+          }
+        }
+      }
+    }
+  `,
+
+  /**
    * Add reaction to a subject (comment, review, etc.)
    * Reaction content: THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY, CONFUSED, HEART, ROCKET, EYES
    */

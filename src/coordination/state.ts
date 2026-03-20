@@ -42,10 +42,46 @@ import type {
 class CoordinationStateManager {
   private currentRun: CoordinationState | null = null;
   private readonly STALE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+  private static readonly DEFAULT_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
   private resolvedNitpicks: Map<string, NitpickResolution> = new Map();
   private nitpicksLoaded: boolean = false;
   private currentPrKey: string | null = null;
   private orchestratorProgress: OrchestratorProgress | null = null;
+
+  /**
+   * Get the timestamp of the last activity on the current run.
+   * Uses the most recent agent lastSeen, falling back to startedAt.
+   */
+  private getLastActivityTs(): number {
+    if (!this.currentRun) return Date.now();
+    let lastTs = new Date(this.currentRun.startedAt).getTime();
+    for (const agent of this.currentRun.agents.values()) {
+      const ts = new Date(agent.lastSeen).getTime();
+      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
+    }
+    return Number.isFinite(lastTs) ? lastTs : Date.now();
+  }
+
+  /**
+   * Clear expired runs to prevent memory leaks from abandoned coordination sessions.
+   * A run is considered expired if no agent activity for maxAgeMs.
+   * Called automatically from initRun() and claimPartition().
+   */
+  clearExpiredRuns(maxAgeMs: number = CoordinationStateManager.DEFAULT_EXPIRY_MS): boolean {
+    if (!this.currentRun) return false;
+
+    const inactivity = Date.now() - this.getLastActivityTs();
+    if (inactivity > maxAgeMs) {
+      logger.warning(
+        `[coordination] Clearing expired run ${this.currentRun.runId} ` +
+        `(inactive: ${Math.round(inactivity / 1000)}s, threshold: ${Math.round(maxAgeMs / 1000)}s)`
+      );
+      this.currentRun = null;
+      this.orchestratorProgress = null;
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Initialize a new coordination run
@@ -56,6 +92,8 @@ class CoordinationStateManager {
     headSha: string,
     partitions: FilePartition[]
   ): string {
+    this.clearExpiredRuns();
+
     if (this.currentRun) {
       const status = this.currentRun.completedAt ? 'completed' : 'active';
       logger.warning(
@@ -91,6 +129,7 @@ class CoordinationStateManager {
    * Atomically claim the next pending partition for an agent
    */
   claimPartition(agentId: string): FilePartition | null {
+    this.clearExpiredRuns();
     if (!this.currentRun) return null;
 
     this.cleanupStaleAgents();

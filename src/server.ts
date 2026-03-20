@@ -4,30 +4,26 @@
  * Provides tools for processing PR reviews with GraphQL-based GitHub integration.
  * Features: cursor pagination (zero comments missed), 4-layer AI prompt extraction,
  * circuit breaker, and automated workflow prompt.
+ *
+ * Uses McpServer high-level API (SDK 1.25+) for declarative tool/prompt/resource registration.
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListToolsRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-  McpError,
-  Tool,
-  Prompt,
-  Resource,
-} from '@modelcontextprotocol/sdk/types.js';
-
-import { z, ZodError } from 'zod';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
 import { logger } from './logging.js';
-import { prSummary, SummaryInputSchema } from './tools/summary.js';
-import { prList, ListInputSchema } from './tools/list.js';
-import { prGet, GetInputSchema } from './tools/get.js';
+import { toMcpError } from './tools/shared.js';
+
+// Tool handlers and schemas
+import { prSummary, SummaryInputSchema, SummaryOutputSchema } from './tools/summary.js';
+import { prList, ListInputSchema, ListOutputSchema } from './tools/list.js';
+import { prGet, GetInputSchema, GetOutputSchema } from './tools/get.js';
 import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
 import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
@@ -49,723 +45,466 @@ import {
   GetWorkStatusSchema,
   ResetCoordinationSchema,
   ProgressUpdateSchema,
-  ProgressCheckSchema
+  ProgressCheckSchema,
+  WorkStatusOutputSchema,
+  ProgressCheckOutputSchema,
 } from './tools/coordination.js';
-import { getInvokableAgentIds } from './agents/registry.js';
+
+// Prompts
 import {
   generateReviewPrompt,
   generateBackgroundReviewPrompt,
   REVIEW_PROMPT_DEFINITION,
   BACKGROUND_REVIEW_PROMPT_DEFINITION,
-  type ReviewPromptArgs
+  type ReviewPromptArgs,
 } from './prompts/review.js';
 import {
   generateSetupPrompt,
   SETUP_PROMPT_DEFINITION,
-  type SetupPromptArgs
+  type SetupPromptArgs,
 } from './prompts/setup.js';
-import { listPRResources, readPRResource } from './resources/pr.js';
+
+// Resources
+import { readPRResource } from './resources/pr.js';
+
+// Read version from package.json (fix F10: version mismatch)
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 
 // ============================================================================
 // MCP Server
 // ============================================================================
 
 export class PRReviewMCPServer {
-  private server: Server;
+  private mcpServer: McpServer;
   private githubClient: GitHubClient;
+  private httpServer?: import('node:http').Server;
 
   constructor() {
-    this.server = new Server(
-      {
-        name: 'pr',
-        version: '1.0.0',
-      },
+    this.mcpServer = new McpServer(
+      { name: 'pr', version: pkg.version },
       {
         capabilities: {
           tools: {},
           prompts: {},
           logging: {},
           resources: {},
-          experimental: { 'x-mux': { sharing: 'shared', stateless: true } },
+          experimental: { 'x-mux': { sharing: 'shared', stateless: false } },
         },
-      }
+      },
     );
 
     this.githubClient = new GitHubClient();
-    logger.initialize(this.server);
-    this.setupToolHandlers();
-    this.setupPromptHandlers();
-    this.setupResourceHandlers();
+    logger.initialize(this.mcpServer.server);
+
+    this.registerTools();
+    this.registerPrompts();
+    this.registerResources();
     this.setupErrorHandling();
   }
 
+  // --------------------------------------------------------------------------
+  // Error handling
+  // --------------------------------------------------------------------------
+
   private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
+    this.mcpServer.server.onerror = (error) => {
       logger.error('MCP protocol error', error);
     };
 
     process.on('SIGINT', async () => {
-      await this.server.close();
+      if (this.httpServer) {
+        this.httpServer.close();
+      }
+      await this.mcpServer.close();
       process.exit(0);
     });
   }
 
-  private setupPromptHandlers(): void {
-    // List prompts
-    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
-      return {
-        prompts: [
-          {
-            name: REVIEW_PROMPT_DEFINITION.name,
-            description: REVIEW_PROMPT_DEFINITION.description,
-            arguments: REVIEW_PROMPT_DEFINITION.arguments
-          },
-          {
-            name: BACKGROUND_REVIEW_PROMPT_DEFINITION.name,
-            description: BACKGROUND_REVIEW_PROMPT_DEFINITION.description,
-            arguments: BACKGROUND_REVIEW_PROMPT_DEFINITION.arguments
-          },
-          {
-            name: SETUP_PROMPT_DEFINITION.name,
-            description: SETUP_PROMPT_DEFINITION.description,
-            arguments: SETUP_PROMPT_DEFINITION.arguments
-          }
-        ] as Prompt[]
-      };
+  // --------------------------------------------------------------------------
+  // Helpers
+  // --------------------------------------------------------------------------
+
+  /** Wrap tool result as MCP text content */
+  private static textResult(data: unknown): CallToolResult {
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  }
+
+  /** Wrap tool result with both text content and structuredContent for outputSchema tools */
+  private static structuredResult(data: object): CallToolResult {
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+      structuredContent: data as Record<string, unknown>,
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // Tool registration
+  // --------------------------------------------------------------------------
+
+  private registerTools(): void {
+    const client = this.githubClient;
+
+    // -- Read-only query tools ------------------------------------------------
+
+    this.mcpServer.registerTool('pr_summary', {
+      title: 'Get PR Review Statistics',
+      description: 'Get PR review statistics: total, resolved, unresolved counts by severity and file',
+      inputSchema: SummaryInputSchema,
+      outputSchema: SummaryOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.structuredResult(await prSummary(args, client)); }
+      catch (e) { throw toMcpError(e); }
     });
 
-    // Get prompt
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+    this.mcpServer.registerTool('pr_list_prs', {
+      title: 'List Pull Requests',
+      description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
+      inputSchema: ListPRsInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prListPRs(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-      // Review prompts share the same args shape, differ only in generator
-      const reviewGenerators: Record<string, typeof generateReviewPrompt> = {
-        'review': generateReviewPrompt,
-        'review-background': generateBackgroundReviewPrompt
-      };
+    this.mcpServer.registerTool('pr_list', {
+      title: 'List PR Review Comments',
+      description: 'List PR review comments with optional filtering by resolved/file/severity',
+      inputSchema: ListInputSchema,
+      outputSchema: ListOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.structuredResult(await prList(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-      if (reviewGenerators[name]) {
-        const promptArgs: ReviewPromptArgs = {
-          owner: args?.owner as string | undefined,
-          repo: args?.repo as string | undefined,
-          pr: args?.pr as string | undefined,
-          workers: args?.workers as string | undefined
-        };
+    this.mcpServer.registerTool('pr_get', {
+      title: 'Get Detailed Comment Information',
+      description: 'Get detailed comment information including full body and AI prompt',
+      inputSchema: GetInputSchema,
+      outputSchema: GetOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.structuredResult(await prGet(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-        const promptText = await reviewGenerators[name](promptArgs, this.githubClient);
+    this.mcpServer.registerTool('pr_changes', {
+      title: 'Get Incremental Comment Updates',
+      description: 'Get comments since cursor for incremental updates',
+      inputSchema: ChangesInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prChanges(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-        return {
-          messages: [
-            {
-              role: 'user',
-              content: {
-                type: 'text',
-                text: promptText
-              }
-            }
-          ]
-        };
-      }
+    this.mcpServer.registerTool('pr_poll_updates', {
+      title: 'Poll for Review Updates',
+      description: 'Poll for new review updates since a timestamp (comments, commits, status)',
+      inputSchema: PollInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prPollUpdates(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-      if (name === 'setup') {
-        const setupArgs: SetupPromptArgs = {
-          repo: args?.repo as string | undefined
-        };
+    // -- Mutating tools -------------------------------------------------------
 
-        const promptText = await generateSetupPrompt(setupArgs);
+    this.mcpServer.registerTool('pr_resolve', {
+      title: 'Resolve Review Thread',
+      description: 'Mark a review thread as resolved',
+      inputSchema: ResolveInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prResolveWithContext(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-        return {
-          messages: [
-            {
-              role: 'user',
-              content: {
-                type: 'text',
-                text: promptText
-              }
-            }
-          ]
-        };
-      }
+    this.mcpServer.registerTool('pr_invoke', {
+      title: 'Invoke AI Code Review Agents',
+      description: 'Invoke AI code review agents on a PR. When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, (2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). Use pr:setup prompt to configure per-repo agents. Smart detection skips agents that already reviewed (use force to override).',
+      inputSchema: InvokeInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prInvoke(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
 
-      throw new McpError(ErrorCode.MethodNotFound, `Unknown prompt: ${name}`);
+    this.mcpServer.registerTool('pr_labels', {
+      title: 'Manage PR Labels',
+      description: 'Get, add, remove, or set labels on a PR',
+      inputSchema: LabelsInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prLabels(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_reviewers', {
+      title: 'Manage PR Reviewers',
+      description: 'Request or remove reviewers on a PR',
+      inputSchema: ReviewersInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prReviewers(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_create', {
+      title: 'Create Pull Request',
+      description: 'Create a new pull request from an existing branch',
+      inputSchema: CreateInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prCreate(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_merge', {
+      title: 'Merge Pull Request',
+      description: 'Merge a pull request (CAUTION: destructive operation, requires confirm=true)',
+      inputSchema: MergeInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prMerge(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    // -- Coordination tools ---------------------------------------------------
+
+    this.mcpServer.registerTool('pr_claim_work', {
+      title: 'Claim Work Partition',
+      description: 'Claim file partition for parallel PR review processing',
+      inputSchema: ClaimWorkSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prClaimWork(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_report_progress', {
+      title: 'Report Work Progress',
+      description: 'Report completion status for a claimed file partition',
+      inputSchema: ReportProgressSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prReportProgress(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_get_work_status', {
+      title: 'Get Work Status',
+      description: 'Get current coordination run status and progress',
+      inputSchema: GetWorkStatusSchema,
+      outputSchema: WorkStatusOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, client)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_reset_coordination', {
+      title: 'Reset Coordination State',
+      description: 'Reset/clear the current coordination run (use with caution)',
+      inputSchema: ResetCoordinationSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prResetCoordination(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_progress_update', {
+      title: 'Report Orchestrator Phase',
+      description: 'Report orchestrator phase transition (called by background subagent)',
+      inputSchema: ProgressUpdateSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.textResult(await prProgressUpdate(args)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_progress_check', {
+      title: 'Check Orchestrator Progress',
+      description: 'Check orchestrator progress and run status in a single call',
+      inputSchema: ProgressCheckSchema,
+      outputSchema: ProgressCheckOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async (args) => {
+      try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args)); }
+      catch (e) { throw toMcpError(e); }
     });
   }
 
-  private setupResourceHandlers(): void {
-    // List resources
-    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      const resources = await listPRResources();
-      return { resources };
-    });
+  // --------------------------------------------------------------------------
+  // Prompt registration
+  // --------------------------------------------------------------------------
 
-    // Read resource
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const { uri } = request.params;
-      return await readPRResource(uri, this.githubClient);
+  private registerPrompts(): void {
+    const client = this.githubClient;
+
+    // Shared Zod shape for review prompt arguments
+    const reviewArgsSchema = {
+      owner: z.string().optional().describe('Repository owner'),
+      repo: z.string().optional().describe('Repository name'),
+      pr: z.string().optional().describe('PR number, GitHub URL, or short format (owner/repo#123)'),
+      workers: z.string().optional().describe('Number of parallel workers (default: 3)'),
+    };
+
+    const makeReviewCallback = (generator: typeof generateReviewPrompt) => {
+      return async (args: ReviewPromptArgs) => ({
+        messages: [{ role: 'user' as const, content: { type: 'text' as const, text: await generator(args, client) } }],
+      });
+    };
+
+    this.mcpServer.registerPrompt('review', {
+      title: REVIEW_PROMPT_DEFINITION.title,
+      description: REVIEW_PROMPT_DEFINITION.description,
+      argsSchema: reviewArgsSchema,
+    }, makeReviewCallback(generateReviewPrompt));
+
+    this.mcpServer.registerPrompt('review-background', {
+      title: BACKGROUND_REVIEW_PROMPT_DEFINITION.title,
+      description: BACKGROUND_REVIEW_PROMPT_DEFINITION.description,
+      argsSchema: reviewArgsSchema,
+    }, makeReviewCallback(generateBackgroundReviewPrompt));
+
+    this.mcpServer.registerPrompt('setup', {
+      title: SETUP_PROMPT_DEFINITION.title,
+      description: SETUP_PROMPT_DEFINITION.description,
+      argsSchema: {
+        repo: z.string().optional().describe('Repository in owner/repo format'),
+      },
+    }, async (args: SetupPromptArgs) => ({
+      messages: [{ role: 'user' as const, content: { type: 'text' as const, text: await generateSetupPrompt(args) } }],
+    }));
+  }
+
+  // --------------------------------------------------------------------------
+  // Resource registration
+  // --------------------------------------------------------------------------
+
+  private registerResources(): void {
+    const client = this.githubClient;
+
+    const template = new ResourceTemplate('pr://{owner}/{repo}/{pr}', { list: undefined });
+
+    this.mcpServer.registerResource('pr', template, {
+      description: 'Dynamic PR resource with summary and metadata. Use pr://{owner}/{repo}/{pr} format.',
+      mimeType: 'application/json',
+    }, async (uri, variables) => {
+      return await readPRResource(uri.href, client);
     });
   }
 
-  private setupToolHandlers(): void {
-    // List tools
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          {
-            name: 'pr_summary',
-            description: 'Get PR review statistics: total, resolved, unresolved counts by severity and file',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' }
-              },
-              required: ['owner', 'repo', 'pr']
-            },
-            annotations: {
-              title: 'Get PR Review Statistics',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_list_prs',
-            description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                state: { type: 'string', enum: ['OPEN', 'CLOSED', 'MERGED', 'all'], description: 'PR state filter (default: OPEN)' },
-                limit: { type: 'number', description: 'Max PRs to return (default: 20, max: 100)' }
-              },
-              required: ['owner', 'repo']
-            },
-            annotations: {
-              title: 'List Pull Requests',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_list',
-            description: 'List PR review comments with optional filtering by resolved/file/severity',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                filter: {
-                  type: 'object',
-                  properties: {
-                    resolved: { type: 'boolean', description: 'Filter by resolved status' },
-                    file: { type: 'string', description: 'Filter by file path (substring match)' }
-                  }
-                },
-                max: { type: 'number', description: 'Max comments to return (default: 20)' }
-              },
-              required: ['owner', 'repo', 'pr']
-            },
-            annotations: {
-              title: 'List PR Review Comments',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_get',
-            description: 'Get detailed comment information including full body and AI prompt',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                id: { type: 'string', description: 'Comment or thread ID' }
-              },
-              required: ['owner', 'repo', 'pr', 'id']
-            },
-            annotations: {
-              title: 'Get Detailed Comment Information',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_resolve',
-            description: 'Mark a review thread as resolved',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                threadId: { type: 'string', description: 'Thread ID to resolve' }
-              },
-              required: ['owner', 'repo', 'pr', 'threadId']
-            },
-            annotations: {
-              title: 'Resolve Review Thread',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_changes',
-            description: 'Get comments since cursor for incremental updates',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                cursor: { type: 'string', description: 'Pagination cursor from previous call' },
-                max: { type: 'number', description: 'Max comments to return (default: 50)' }
-              },
-              required: ['owner', 'repo', 'pr']
-            },
-            annotations: {
-              title: 'Get Incremental Comment Updates',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_invoke',
-            description: `Invoke AI code review agents on a PR. When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, (2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). Use pr:setup prompt to configure per-repo agents. Smart detection skips agents that already reviewed (use force to override).`,
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                agent: {
-                  type: 'string',
-                  enum: [...getInvokableAgentIds(), 'all'],
-                  description: 'Agent to invoke, or "all" for configured agents from .github/pr-review.json'
-                },
-                options: {
-                  type: 'object',
-                  properties: {
-                    focus: { type: 'string', description: 'Review focus: security, performance, best-practices' },
-                    files: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Specific files to review'
-                    },
-                    incremental: { type: 'boolean', description: 'Review only new changes since last review' }
-                  }
-                }
-              },
-              required: ['owner', 'repo', 'pr', 'agent']
-            },
-            annotations: {
-              title: 'Invoke AI Code Review Agents',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: false,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_poll_updates',
-            description: 'Poll for new review updates since a timestamp (comments, commits, status)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                since: { type: 'string', description: 'ISO timestamp to poll from (omit for all)' },
-                include: {
-                  type: 'array',
-                  items: { type: 'string', enum: ['comments', 'reviews', 'commits', 'status', 'agents'] },
-                  description: 'Update types to include (default: all except agents). Use "agents" to get AI reviewer completion status.'
-                },
-                compact: {
-                  type: 'boolean',
-                  description: 'Return comment summary instead of full list (default: true)',
-                  default: true
-                }
-              },
-              required: ['owner', 'repo', 'pr']
-            },
-            annotations: {
-              title: 'Poll for Review Updates',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_labels',
-            description: 'Get, add, remove, or set labels on a PR',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                action: { type: 'string', enum: ['get', 'add', 'remove', 'set'], description: 'Label action (get returns current labels)' },
-                labels: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Label names (required for add/remove/set, ignored for get)'
-                }
-              },
-              required: ['owner', 'repo', 'pr', 'action']
-            },
-            annotations: {
-              title: 'Manage PR Labels',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_reviewers',
-            description: 'Request or remove reviewers on a PR',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                action: { type: 'string', enum: ['request', 'remove'], description: 'Reviewer action' },
-                reviewers: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'GitHub usernames to request/remove as reviewers (at least one of reviewers or team_reviewers required)'
-                },
-                team_reviewers: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Team slugs to request/remove as reviewers (at least one of reviewers or team_reviewers required)'
-                }
-              },
-              required: ['owner', 'repo', 'pr', 'action']
-            },
-            annotations: {
-              title: 'Manage PR Reviewers',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_create',
-            description: 'Create a new pull request from an existing branch',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                title: { type: 'string', description: 'PR title' },
-                body: { type: 'string', description: 'PR description' },
-                base: { type: 'string', description: 'Base branch (default: main)' },
-                head: { type: 'string', description: 'Head branch to merge from' },
-                draft: { type: 'boolean', description: 'Create as draft PR' }
-              },
-              required: ['owner', 'repo', 'title', 'head']
-            },
-            annotations: {
-              title: 'Create Pull Request',
-              readOnlyHint: false,
-              destructiveHint: true,
-              idempotentHint: false,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_merge',
-            description: 'Merge a pull request (CAUTION: destructive operation, requires confirm=true)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                owner: { type: 'string', description: 'Repository owner' },
-                repo: { type: 'string', description: 'Repository name' },
-                pr: { type: 'number', description: 'Pull request number' },
-                method: { type: 'string', enum: ['merge', 'squash', 'rebase'], description: 'Merge method (default: squash)' },
-                commit_title: { type: 'string', description: 'Custom merge commit title' },
-                commit_message: { type: 'string', description: 'Custom merge commit message' },
-                delete_branch: { type: 'boolean', description: 'Delete head branch after merge (default: true)' },
-                confirm: { type: 'boolean', const: true, description: 'REQUIRED: Must be true to confirm merge (safety guard)' }
-              },
-              required: ['owner', 'repo', 'pr', 'confirm']
-            },
-            annotations: {
-              title: 'Merge Pull Request',
-              readOnlyHint: false,
-              destructiveHint: true,
-              idempotentHint: false,
-              openWorldHint: true
-            }
-          },
-          {
-            name: 'pr_claim_work',
-            description: 'Claim file partition for parallel PR review processing',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                agent_id: { type: 'string', description: 'Unique identifier for the claiming agent' },
-                run_id: { type: 'string', description: 'Optional run ID (auto-created if not provided)' },
-                pr_info: {
-                  type: 'object',
-                  properties: {
-                    owner: { type: 'string', description: 'Repository owner' },
-                    repo: { type: 'string', description: 'Repository name' },
-                    pr: { type: 'number', description: 'Pull request number' }
-                  },
-                  required: ['owner', 'repo', 'pr'],
-                  description: 'PR info (required if no active run)'
-                },
-                force: { type: 'boolean', description: 'Force replace active run (use with caution)' }
-              },
-              required: ['agent_id']
-            },
-            annotations: {
-              title: 'Claim Work Partition',
-              readOnlyHint: false,
-              destructiveHint: true, // force=true can destroy existing run state
-              idempotentHint: false,
-              openWorldHint: false
-            }
-          },
-          {
-            name: 'pr_report_progress',
-            description: 'Report completion status for a claimed file partition',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                agent_id: { type: 'string', description: 'Agent ID that claimed the partition' },
-                file: { type: 'string', description: 'File path being reported on' },
-                status: { type: 'string', enum: ['done', 'failed', 'skipped'], description: 'Completion status' },
-                result: {
-                  type: 'object',
-                  properties: {
-                    commentsProcessed: { type: 'number', description: 'Number of comments processed' },
-                    commentsResolved: { type: 'number', description: 'Number of comments resolved' },
-                    errors: { type: 'array', items: { type: 'string' }, description: 'Any errors encountered' }
-                  }
-                }
-              },
-              required: ['agent_id', 'file', 'status']
-            },
-            annotations: {
-              title: 'Report Work Progress',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: false,
-              openWorldHint: false
-            }
-          },
-          {
-            name: 'pr_get_work_status',
-            description: 'Get current coordination run status and progress',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                run_id: { type: 'string', description: 'Optional run ID (defaults to current run)' }
-              }
-            },
-            annotations: {
-              title: 'Get Work Status',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: false
-            }
-          },
-          {
-            name: 'pr_reset_coordination',
-            description: 'Reset/clear the current coordination run (use with caution)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                confirm: { type: 'boolean', const: true, description: 'Must be true to confirm reset (safety guard)' }
-              },
-              required: ['confirm']
-            },
-            annotations: {
-              title: 'Reset Coordination State',
-              readOnlyHint: false,
-              destructiveHint: true,
-              idempotentHint: true,
-              openWorldHint: false
-            }
-          },
-          {
-            name: 'pr_progress_update',
-            description: 'Report orchestrator phase transition (called by background subagent)',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                phase: {
-                  type: 'string',
-                  enum: ['escape_check', 'preflight', 'label', 'invoke_agents', 'poll_wait', 'spawn_workers', 'monitor', 'build_test', 'complete', 'error', 'aborted'],
-                  description: 'Current orchestrator phase'
-                },
-                detail: { type: 'string', description: 'Optional context (max 200 chars)', maxLength: 200 }
-              },
-              required: ['phase']
-            },
-            annotations: {
-              title: 'Report Orchestrator Phase',
-              readOnlyHint: false,
-              destructiveHint: false,
-              idempotentHint: false,
-              openWorldHint: false
-            }
-          },
-          {
-            name: 'pr_progress_check',
-            description: 'Check orchestrator progress and run status in a single call',
-            inputSchema: {
-              type: 'object',
-              properties: {}
-            },
-            annotations: {
-              title: 'Check Orchestrator Progress',
-              readOnlyHint: true,
-              destructiveHint: false,
-              idempotentHint: true,
-              openWorldHint: false
-            }
-          }
-        ] as Tool[]
-      };
-    });
+  // --------------------------------------------------------------------------
+  // Server lifecycle
+  // --------------------------------------------------------------------------
 
-    // Type definition for tool handlers
-    type ToolHandler = (args: any, client?: GitHubClient) => Promise<any>;
+  async run(options: { mode?: 'stdio' | 'http'; port?: number } = {}): Promise<void> {
+    const { mode = 'stdio', port = 3000 } = options;
 
-    // Helper to create tool handler with schema validation and unified error handling
-    const createToolHandler = <T extends z.ZodTypeAny>(
-      schema: T,
-      handler: (input: z.infer<T>, client: GitHubClient) => Promise<any>
-    ): ToolHandler => {
-      return async (args, client) => {
-        if (!client) {
-          throw new Error('GitHubClient is required for this handler');
-        }
-        const validated = schema.parse(args);
-        return handler(validated, client);
-      };
-    };
-
-    // Helper for handlers that don't need client
-    const createSimpleHandler = <T extends z.ZodTypeAny>(
-      schema: T,
-      handler: (input: z.infer<T>) => Promise<any>
-    ): ToolHandler => {
-      return async (args) => {
-        const validated = schema.parse(args);
-        return handler(validated);
-      };
-    };
-
-    // Tool handler map for better maintainability and scalability
-    const toolHandlers: Record<string, ToolHandler> = {
-      'pr_summary': createToolHandler(SummaryInputSchema, prSummary),
-      'pr_list_prs': createToolHandler(ListPRsInputSchema, prListPRs),
-      'pr_list': createToolHandler(ListInputSchema, prList),
-      'pr_get': createToolHandler(GetInputSchema, prGet),
-      'pr_resolve': createToolHandler(ResolveInputSchema, prResolveWithContext),
-      'pr_changes': createToolHandler(ChangesInputSchema, prChanges),
-      'pr_invoke': createSimpleHandler(InvokeInputSchema, prInvoke),
-      'pr_poll_updates': createToolHandler(PollInputSchema, prPollUpdates),
-      'pr_labels': createSimpleHandler(LabelsInputSchema, prLabels),
-      'pr_reviewers': createSimpleHandler(ReviewersInputSchema, prReviewers),
-      'pr_create': createSimpleHandler(CreateInputSchema, prCreate),
-      'pr_merge': createSimpleHandler(MergeInputSchema, prMerge),
-      'pr_claim_work': createToolHandler(ClaimWorkSchema, prClaimWork),
-      'pr_report_progress': createSimpleHandler(ReportProgressSchema, prReportProgress),
-      'pr_get_work_status': createToolHandler(GetWorkStatusSchema, prGetWorkStatus),
-      'pr_reset_coordination': createSimpleHandler(ResetCoordinationSchema, prResetCoordination),
-      'pr_progress_update': createSimpleHandler(ProgressUpdateSchema, prProgressUpdate),
-      'pr_progress_check': createSimpleHandler(ProgressCheckSchema, prProgressCheck)
-    };
-
-    // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
-
-      try {
-        const handler = toolHandlers[name];
-        if (!handler) {
-          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-        }
-
-        const result = await handler(args, this.githubClient);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-        };
-      } catch (error) {
-        if (error instanceof ZodError) {
-          throw new McpError(ErrorCode.InvalidRequest, `Validation error: ${error.message}`);
-        }
-
-        if (error instanceof McpError) {
-          throw error;
-        }
-
-        if (error instanceof StructuredError) {
-          const errorCodeMap: Record<string, ErrorCode> = {
-            'auth': ErrorCode.InvalidRequest,
-            'permission': ErrorCode.InvalidRequest,
-            'not_found': ErrorCode.InvalidRequest,
-            'parse': ErrorCode.InvalidRequest,
-            'rate_limit': ErrorCode.InternalError,
-            'network': ErrorCode.InternalError,
-            'circuit_open': ErrorCode.InternalError
-          };
-          throw new McpError(
-            errorCodeMap[error.kind] ?? ErrorCode.InternalError,
-            error.message
-          );
-        }
-
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new McpError(ErrorCode.InternalError, `Tool execution failed: ${errorMessage}`);
-      }
-    });
-  }
-
-  async run(): Promise<void> {
-    // Check prerequisites - exit early if not met
+    // Check prerequisites — exit early if not met
     try {
       this.githubClient.checkPrerequisites();
-      console.error('✅ GitHub token configured');
+      console.error('GitHub token configured');
     } catch (e) {
       if (e instanceof StructuredError) {
-        console.error(`❌ ${e.message}`);
+        console.error(`${e.message}`);
         if (e.userAction) {
           console.error(`   Action: ${e.userAction}`);
         }
       } else {
-        console.error(`❌ Prerequisite check failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`Prerequisite check failed: ${e instanceof Error ? e.message : String(e)}`);
       }
       process.exit(1);
     }
 
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('🚀 PR Review MCP server running on stdio');
+    if (mode === 'http') {
+      await this.runHttp(port);
+    } else {
+      const transport = new StdioServerTransport();
+      await this.mcpServer.connect(transport);
+      console.error('PR Review MCP server running on stdio');
+    }
+  }
+
+  private async runHttp(port: number): Promise<void> {
+    // Session map: each client session gets its own transport
+    const sessions = new Map<string, StreamableHTTPServerTransport>();
+    const sessionLastSeen = new Map<string, number>();
+    const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+    // Periodic cleanup of stale sessions (disconnected without proper close)
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [sid, lastSeen] of sessionLastSeen) {
+        if (now - lastSeen > SESSION_TIMEOUT_MS) {
+          const transport = sessions.get(sid);
+          if (transport) transport.close();
+          sessions.delete(sid);
+          sessionLastSeen.delete(sid);
+        }
+      }
+    }, 60_000);
+    cleanupInterval.unref(); // Don't prevent process exit
+
+    this.httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+      try {
+        const url = req.url ?? '/';
+
+        if (url === '/mcp' || url === '/') {
+          const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+          if (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE') {
+            let transport: StreamableHTTPServerTransport;
+
+            if (sessionId && sessions.has(sessionId)) {
+              transport = sessions.get(sessionId)!;
+              sessionLastSeen.set(sessionId, Date.now());
+            } else {
+              // New session — create transport and connect to McpServer
+              transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: () => randomUUID(),
+              });
+
+              transport.onclose = () => {
+                const sid = transport.sessionId;
+                if (sid) {
+                  sessions.delete(sid);
+                  sessionLastSeen.delete(sid);
+                }
+              };
+
+              await this.mcpServer.connect(transport);
+
+              if (transport.sessionId) {
+                sessions.set(transport.sessionId, transport);
+                sessionLastSeen.set(transport.sessionId, Date.now());
+              }
+            }
+
+            await transport.handleRequest(req, res);
+          } else {
+            res.writeHead(405, { 'Content-Type': 'text/plain' });
+            res.end('Method Not Allowed');
+          }
+        } else {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
+        }
+      } catch (error) {
+        logger.error('HTTP request handler error', error);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        }
+      }
+    });
+
+    this.httpServer.listen(port, () => {
+      console.error(`PR Review MCP server running on http://localhost:${port}/mcp`);
+    });
   }
 }

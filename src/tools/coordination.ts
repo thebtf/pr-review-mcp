@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { logger } from '../logging.js';
@@ -356,6 +357,65 @@ export async function prProgressCheck(
     }
   };
 }
+
+// Output schemas for structured content
+
+export const WorkStatusOutputSchema = z.object({
+  runId: z.string().optional(),
+  prInfo: z.object({
+    owner: z.string(),
+    repo: z.string(),
+    pr: z.number(),
+  }).optional(),
+  progress: z.object({
+    pending: z.number(),
+    claimed: z.number(),
+    done: z.number(),
+    failed: z.number(),
+    skipped: z.number(),
+  }).optional(),
+  total: z.number().optional(),
+  agents: z.array(z.object({
+    agentId: z.string(),
+    claimedCount: z.number(),
+    completedCount: z.number(),
+    lastSeen: z.string(),
+  })).optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  isActive: z.boolean(),
+  runAge: z.number().nullable(),
+  pendingAgents: z.array(z.string()),
+  reviewedAgents: z.array(z.string()),
+  isFullyComplete: z.boolean(),
+});
+
+export const ProgressCheckOutputSchema = z.object({
+  orchestrator: z.object({
+    currentPhase: z.string(),
+    detail: z.string().optional(),
+    history: z.array(z.object({
+      phase: z.string(),
+      detail: z.string().optional(),
+      timestamp: z.string(),
+    })),
+    startedAt: z.string(),
+    completedAt: z.string().optional(),
+  }).nullable(),
+  run: z.object({
+    active: z.boolean(),
+    progress: z.object({
+      pending: z.number(),
+      claimed: z.number(),
+      done: z.number(),
+      failed: z.number(),
+      skipped: z.number(),
+    }).optional(),
+    total: z.number().optional(),
+    agents: z.number().optional(),
+    completedAt: z.string().optional(),
+  }),
+});
 
 // Export schemas for registration
 export {

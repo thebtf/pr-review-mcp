@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import { GitHubClient, StructuredError } from '../github/client.js';
-import { fetchAllThreads } from './shared.js';
+import { fetchAllThreads, fetchSingleThread } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import type { GetInput, GetOutput } from '../github/types.js';
@@ -16,6 +16,48 @@ export const GetInputSchema = z.object({
   id: z.string().min(1, 'Comment ID is required')
 });
 
+export const GetOutputSchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  file: z.string(),
+  line: z.union([z.number(), z.string()]),
+  severity: z.string(),
+  source: z.string(),
+  title: z.string(),
+  body: z.string(),
+  aiPrompt: z.object({
+    text: z.string(),
+    confidence: z.enum(['high', 'low']),
+  }).nullable(),
+  replies: z.array(z.object({
+    id: z.string(),
+    body: z.string(),
+    author: z.string(),
+    createdAt: z.string().optional(),
+  })),
+  canResolve: z.boolean(),
+});
+
+/** Convert a ProcessedComment to GetOutput format */
+function toGetOutput(comment: import('../github/types.js').ProcessedComment): GetOutput {
+  return {
+    id: comment.id,
+    threadId: comment.threadId,
+    file: comment.file,
+    line: comment.line,
+    severity: comment.severity,
+    source: comment.source,
+    title: comment.title,
+    body: comment.fullBody,
+    aiPrompt: comment.aiPrompt ? {
+      text: comment.aiPrompt,
+      confidence: comment.aiPromptConfidence === 'absent' ? 'low' : comment.aiPromptConfidence
+    } : null,
+    replies: comment.replies,
+    canResolve: comment.canResolve
+  };
+}
+
 /**
  * Get detailed information about a specific comment
  */
@@ -26,7 +68,17 @@ export async function prGet(
   const validated = GetInputSchema.parse(input);
   const { owner, repo, pr, id } = validated;
 
-  // Fetch review threads, Qodo, and Greptile comments in parallel
+  // Fast path: if ID looks like a full GraphQL node ID, try single-thread fetch first.
+  // This avoids fetching all threads when the caller already has a thread ID.
+  const isFullNodeId = id.length > 20 && /^[A-Za-z]/.test(id);
+  if (isFullNodeId) {
+    const directComment = await fetchSingleThread(client, id);
+    if (directComment) {
+      return toGetOutput(directComment);
+    }
+  }
+
+  // Full fetch: review threads, Qodo, and Greptile comments in parallel
   const [threadsResult, qodoReview, greptileReview] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { maxItems: 1000 }),
     fetchQodoReview(owner, repo, pr),
@@ -134,20 +186,5 @@ export async function prGet(
     throw new StructuredError('not_found', `Comment ${id} not found`, false);
   }
 
-  return {
-    id: comment.id,
-    threadId: comment.threadId,
-    file: comment.file,
-    line: comment.line,
-    severity: comment.severity,
-    source: comment.source,
-    title: comment.title,
-    body: comment.fullBody,
-    aiPrompt: comment.aiPrompt ? {
-      text: comment.aiPrompt,
-      confidence: comment.aiPromptConfidence as 'high' | 'low'
-    } : null,
-    replies: comment.replies,
-    canResolve: comment.canResolve
-  };
+  return toGetOutput(comment);
 }

@@ -17,6 +17,21 @@ export const SummaryInputSchema = z.object({
   pr: z.number().int().positive('PR number must be positive')
 });
 
+export const SummaryOutputSchema = z.object({
+  pr: z.string(),
+  total: z.number(),
+  resolved: z.number(),
+  unresolved: z.number(),
+  outdated: z.number(),
+  bySeverity: z.record(z.number()),
+  byFile: z.record(z.number()),
+  nitpicks: z.object({
+    total: z.number(),
+    resolved: z.number(),
+    unresolved: z.number(),
+  }).optional(),
+});
+
 /**
  * Get PR review summary statistics
  * Includes both review threads and Qodo's persistent issue comment

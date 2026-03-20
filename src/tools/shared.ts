@@ -2,11 +2,14 @@
  * Shared utilities for tools
  */
 
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ZodError } from 'zod';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { QUERIES } from '../github/queries.js';
 import type {
   ListThreadsData,
   ListReviewsData,
+  GetThreadData,
   ReviewThread,
   ProcessedComment,
   ProcessedReply,
@@ -24,6 +27,34 @@ import {
 import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
 import { stateManager } from '../coordination/state.js';
 import { loadState } from '../github/state-comment.js';
+
+/**
+ * Convert any error to McpError for consistent MCP protocol error responses.
+ * Handles StructuredError, ZodError, McpError passthrough, and unknown errors.
+ */
+export function toMcpError(error: unknown): McpError {
+  if (error instanceof McpError) return error;
+
+  if (error instanceof ZodError) {
+    return new McpError(ErrorCode.InvalidRequest, `Validation error: ${error.message}`);
+  }
+
+  if (error instanceof StructuredError) {
+    const codeMap: Record<string, ErrorCode> = {
+      'auth': ErrorCode.InvalidRequest,
+      'permission': ErrorCode.InvalidRequest,
+      'not_found': ErrorCode.InvalidRequest,
+      'parse': ErrorCode.InvalidRequest,
+      'rate_limit': ErrorCode.InternalError,
+      'network': ErrorCode.InternalError,
+      'circuit_open': ErrorCode.InternalError,
+    };
+    return new McpError(codeMap[error.kind] ?? ErrorCode.InternalError, error.message);
+  }
+
+  const msg = error instanceof Error ? error.message : String(error);
+  return new McpError(ErrorCode.InternalError, `Tool execution failed: ${msg}`);
+}
 
 /**
  * Fetch CodeRabbit review bodies and extract nitpicks + outside diff range comments
@@ -143,6 +174,24 @@ export function processThread(thread: ReviewThread): ProcessedComment {
       createdAt: c.createdAt
     }))
   };
+}
+
+/**
+ * Fetch a single thread by its GraphQL node ID.
+ * Returns null if the thread is not found or the ID is not a thread ID.
+ */
+export async function fetchSingleThread(
+  client: GitHubClient,
+  threadId: string
+): Promise<ProcessedComment | null> {
+  try {
+    const data = await client.graphql<GetThreadData>(QUERIES.getThread, { threadId });
+    const thread = data?.node;
+    if (!thread || !thread.comments?.nodes?.length) return null;
+    return processThread(thread);
+  } catch {
+    return null;
+  }
 }
 
 export interface FetchOptions {

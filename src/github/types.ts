@@ -54,6 +54,10 @@ export interface ListThreadsData {
   repository: RepositoryResponse | null;
 }
 
+export interface GetThreadData {
+  node: ReviewThread | null;
+}
+
 export interface ResolveThreadData {
   resolveReviewThread: {
     thread: {

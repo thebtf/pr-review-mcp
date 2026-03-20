@@ -23,6 +23,22 @@ export const ListInputSchema = z.object({
   max: z.number().int().positive().max(100).default(20)
 });
 
+export const ListOutputSchema = z.object({
+  comments: z.array(z.object({
+    id: z.string(),
+    threadId: z.string(),
+    file: z.string(),
+    line: z.union([z.number(), z.string()]),
+    severity: z.string(),
+    source: z.string(),
+    title: z.string(),
+    resolved: z.boolean(),
+    hasAiPrompt: z.boolean(),
+  })),
+  total: z.number(),
+  hasMore: z.boolean(),
+});
+
 /**
  * List PR review comments with optional filtering
  * Fetches both review threads and Qodo's persistent issue comment
