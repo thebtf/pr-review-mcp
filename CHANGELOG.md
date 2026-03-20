@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-20
+
+### Added
+
+- **Greptile agent support** — parse issue comments + inline reviews from `greptile-code-reviews[bot]`
+- **HTTP transport** — `--http [port]` flag for StreamableHTTP server with per-session management
+- **MCP elicitation** — interactive confirmation for `pr_merge` and `pr_reset_coordination` via `elicitation/create`, with `confirm` param fallback for non-interactive clients
+- **Structured output** — `outputSchema` + `structuredContent` for 5 tools: `pr_summary`, `pr_list`, `pr_get`, `pr_get_work_status`, `pr_progress_check`
+- **Background review prompt** (`review-background`) — fire-and-forget autonomous PR review with self-managed TaskList
+- **`pr_progress_update`** tool — report orchestrator phase transitions
+- **`pr_progress_check`** tool — check orchestrator progress and run status
+- **`getThread` GraphQL query** — single-thread fetch by node ID for optimized `pr_get`
+- **`clearExpiredRuns()`** — auto-cleanup of abandoned coordination runs by inactivity (30min threshold)
+- **`toMcpError()` helper** — unified error conversion for StructuredError/ZodError/McpError
+
+### Changed
+
+- **McpServer migration** — replaced low-level `Server` API with `McpServer` high-level API (`registerTool`/`registerPrompt`/`registerResource`). server.ts: 771 → 350 lines (-54%)
+- **ResourceTemplate** — PR resource uses URI template parsing instead of manual regex
+- **Version from package.json** — fixed hardcoded `1.0.0` in server capabilities
+- **`confirm` parameter** now optional in `pr_merge` and `pr_reset_coordination` (elicitation replaces it)
+- Greptile `authorPattern` corrected to `greptile-apps`
+- Greptile adapter supports both HTML and Markdown headers
+- `pr_get` tries `fetchSingleThread()` fast path for full node IDs before full fetch
+- `pr_get` validates ambiguous suffix matches (throws instead of picking first)
+- `pr_list` deduplicates Qodo/Greptile comment computation
+
+### Fixed
+
+- **mcp-mux correctness** — `x-mux.stateless: true` → `false` (server maintains in-memory coordination state)
+- **SIGINT race condition** — consolidated duplicate handlers into single graceful shutdown
+- **Node 18.x compatibility** — explicit `crypto` import for `randomUUID()`
+- **JSON.parse crash** — `.github/pr-review.json` parsing wrapped in dedicated try-catch with warning log
+- **Elicitation security** — validates `confirm === true` from elicited form content
+- **Client capability check** — verifies `elicitation` capability before `sendRequest` (no catch-all masking)
+- **HTTP error handling** — try/catch in async request handler prevents unhandled rejections
+- **Session cleanup** — periodic 30-min timeout for stale HTTP sessions
+- Confidence score validation (1-5 range) in Greptile adapter
+
+## [0.1.5] - 2026-02-11
+
+### Added
+
+- Delegation hint in review prompt for autonomous worker spawning
+- Task sweep fix for completed partition tracking
+
+### Changed
+
+- Simplified README installation instructions
+
 ## [0.1.4] - 2026-02-09
 
 ### Added
@@ -129,6 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rate limit handling via @octokit plugins
   - Cursor-based pagination for large PRs
 
+[0.2.0]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.2.0
+[0.1.5]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.5
 [0.1.4]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.4
 [0.1.3]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/thebtf/pr-review-mcp/releases/tag/v0.1.2
