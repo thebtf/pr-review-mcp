@@ -49,18 +49,32 @@ class CoordinationStateManager {
   private orchestratorProgress: OrchestratorProgress | null = null;
 
   /**
+   * Get the timestamp of the last activity on the current run.
+   * Uses the most recent agent lastSeen, falling back to startedAt.
+   */
+  private getLastActivityTs(): number {
+    if (!this.currentRun) return Date.now();
+    let lastTs = new Date(this.currentRun.startedAt).getTime();
+    for (const agent of this.currentRun.agents.values()) {
+      const ts = new Date(agent.lastSeen).getTime();
+      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
+    }
+    return Number.isFinite(lastTs) ? lastTs : Date.now();
+  }
+
+  /**
    * Clear expired runs to prevent memory leaks from abandoned coordination sessions.
-   * A run is considered expired if it started more than maxAgeMs ago.
+   * A run is considered expired if no agent activity for maxAgeMs.
    * Called automatically from initRun() and claimPartition().
    */
   clearExpiredRuns(maxAgeMs: number = CoordinationStateManager.DEFAULT_EXPIRY_MS): boolean {
     if (!this.currentRun) return false;
 
-    const age = Date.now() - new Date(this.currentRun.startedAt).getTime();
-    if (age > maxAgeMs) {
+    const inactivity = Date.now() - this.getLastActivityTs();
+    if (inactivity > maxAgeMs) {
       logger.warning(
         `[coordination] Clearing expired run ${this.currentRun.runId} ` +
-        `(age: ${Math.round(age / 1000)}s, threshold: ${Math.round(maxAgeMs / 1000)}s)`
+        `(inactive: ${Math.round(inactivity / 1000)}s, threshold: ${Math.round(maxAgeMs / 1000)}s)`
       );
       this.currentRun = null;
       this.orchestratorProgress = null;

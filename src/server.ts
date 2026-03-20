@@ -8,6 +8,7 @@
  * Uses McpServer high-level API (SDK 1.25+) for declarative tool/prompt/resource registration.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -449,7 +450,7 @@ export class PRReviewMCPServer {
           } else {
             // New session — create transport and connect to McpServer
             transport = new StreamableHTTPServerTransport({
-              sessionIdGenerator: () => crypto.randomUUID(),
+              sessionIdGenerator: () => randomUUID(),
             });
 
             transport.onclose = () => {
