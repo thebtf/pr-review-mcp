@@ -43,6 +43,8 @@ import {
   ResetCoordinationSchema,
   ProgressUpdateSchema,
   ProgressCheckSchema,
+  WorkStatusOutputSchema,
+  ProgressCheckOutputSchema,
 } from './tools/coordination.js';
 
 // Prompts
@@ -289,9 +291,10 @@ export class PRReviewMCPServer {
       title: 'Get Work Status',
       description: 'Get current coordination run status and progress',
       inputSchema: GetWorkStatusSchema,
+      outputSchema: WorkStatusOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prGetWorkStatus(args, client)); }
+      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, client)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -319,9 +322,10 @@ export class PRReviewMCPServer {
       title: 'Check Orchestrator Progress',
       description: 'Check orchestrator progress and run status in a single call',
       inputSchema: ProgressCheckSchema,
+      outputSchema: ProgressCheckOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prProgressCheck(args)); }
+      try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args)); }
       catch (e) { throw toMcpError(e); }
     });
   }
