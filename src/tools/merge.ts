@@ -23,9 +23,9 @@ export const MergeInputSchema = z.object({
   commit_title: z.string().optional(),
   commit_message: z.string().optional(),
   delete_branch: z.boolean().default(true),
-  confirm: z.literal(true, {
-    errorMap: () => ({ message: 'Confirmation required: set confirm=true to merge (destructive operation)' })
-  })
+  confirm: z.boolean().optional().describe(
+    'Safety guard: set true to confirm merge. If omitted, server will try interactive elicitation.'
+  ),
 });
 
 export type MergeInput = z.infer<typeof MergeInputSchema>;

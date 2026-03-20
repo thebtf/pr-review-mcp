@@ -14,7 +14,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  type CallToolResult,
+  type ServerRequest,
+  type ServerNotification,
+  ElicitResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { z } from 'zod';
 import { GitHubClient, StructuredError } from './github/client.js';
 import { logger } from './logging.js';
@@ -124,6 +130,50 @@ export class PRReviewMCPServer {
   // --------------------------------------------------------------------------
   // Helpers
   // --------------------------------------------------------------------------
+
+  /**
+   * Request user confirmation via MCP elicitation.
+   * Returns true if user accepts, false if client doesn't support elicitation.
+   * Throws McpError if user declines or cancels.
+   */
+  private static async elicitConfirmation(
+    message: string,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  ): Promise<boolean> {
+    try {
+      const result = await extra.sendRequest(
+        {
+          method: 'elicitation/create' as const,
+          params: {
+            message,
+            requestedSchema: {
+              type: 'object' as const,
+              properties: {
+                confirm: {
+                  type: 'boolean' as const,
+                  title: 'Confirm',
+                  description: message,
+                  default: false,
+                },
+              },
+              required: ['confirm'],
+            },
+          },
+        },
+        ElicitResultSchema,
+      );
+
+      if (result.action === 'accept') return true;
+      if (result.action === 'decline' || result.action === 'cancel') {
+        throw new StructuredError('permission', 'Operation cancelled by user', false);
+      }
+      return false;
+    } catch (error) {
+      // Client doesn't support elicitation — fall through to confirm param
+      if (error instanceof StructuredError) throw error;
+      return false;
+    }
+  }
 
   /** Wrap tool result as MCP text content */
   private static textResult(data: unknown): CallToolResult {
@@ -264,12 +314,24 @@ export class PRReviewMCPServer {
 
     this.mcpServer.registerTool('pr_merge', {
       title: 'Merge Pull Request',
-      description: 'Merge a pull request (CAUTION: destructive operation, requires confirm=true)',
+      description: 'Merge a pull request. Uses interactive elicitation for confirmation when supported, falls back to confirm=true parameter.',
       inputSchema: MergeInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prMerge(args)); }
-      catch (e) { throw toMcpError(e); }
+    }, async (args, extra) => {
+      try {
+        // Try elicitation first, fall back to confirm param
+        if (!args.confirm) {
+          const confirmed = await PRReviewMCPServer.elicitConfirmation(
+            `Merge PR #${args.pr} in ${args.owner}/${args.repo} via ${args.method ?? 'squash'}?`,
+            extra,
+          );
+          if (!confirmed) {
+            throw new StructuredError('permission',
+              'Confirmation required: set confirm=true or approve the elicitation prompt', false);
+          }
+        }
+        return PRReviewMCPServer.textResult(await prMerge({ ...args, confirm: true as const }));
+      } catch (e) { throw toMcpError(e); }
     });
 
     // -- Coordination tools ---------------------------------------------------
@@ -307,12 +369,23 @@ export class PRReviewMCPServer {
 
     this.mcpServer.registerTool('pr_reset_coordination', {
       title: 'Reset Coordination State',
-      description: 'Reset/clear the current coordination run (use with caution)',
+      description: 'Reset/clear the current coordination run. Uses interactive elicitation for confirmation when supported, falls back to confirm=true parameter.',
       inputSchema: ResetCoordinationSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prResetCoordination(args)); }
-      catch (e) { throw toMcpError(e); }
+    }, async (args, extra) => {
+      try {
+        if (!args.confirm) {
+          const confirmed = await PRReviewMCPServer.elicitConfirmation(
+            'Reset the current coordination run? This will clear all partition state.',
+            extra,
+          );
+          if (!confirmed) {
+            throw new StructuredError('permission',
+              'Confirmation required: set confirm=true or approve the elicitation prompt', false);
+          }
+        }
+        return PRReviewMCPServer.textResult(await prResetCoordination({ ...args, confirm: true }));
+      } catch (e) { throw toMcpError(e); }
     });
 
     this.mcpServer.registerTool('pr_progress_update', {

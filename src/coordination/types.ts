@@ -29,7 +29,9 @@ export const GetWorkStatusSchema = z.object({
 });
 
 export const ResetCoordinationSchema = z.object({
-  confirm: z.literal(true)
+  confirm: z.boolean().optional().describe(
+    'Safety guard: set true to confirm reset. If omitted, server will try interactive elicitation.'
+  ),
 });
 
 // TypeScript interfaces
