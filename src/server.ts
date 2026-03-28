@@ -259,7 +259,7 @@ export class PRReviewMCPServer {
 
     this.mcpServer.registerTool('pr_poll_updates', {
       title: 'Poll for Review Updates',
-      description: 'Poll for new review updates since a timestamp (comments, commits, status)',
+      description: 'Poll for new review updates since a timestamp (comments, commits, status). For waiting on agent reviews, prefer pr_await_reviews which blocks server-side.',
       inputSchema: PollInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args) => {
