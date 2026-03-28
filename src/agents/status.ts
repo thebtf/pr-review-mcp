@@ -43,8 +43,8 @@ export async function paginateWithLimit<T>(
 }
 
 /**
- * Fetch agent completion status by checking for their comments/reviews
- * Only considers activity after the provided 'since' timestamp
+ * Fetch agent completion status for configured default agents.
+ * Delegates to fetchAgentStatusForAgents with getDefaultAgents().
  */
 export async function fetchAgentStatus(
   owner: string,
@@ -52,89 +52,7 @@ export async function fetchAgentStatus(
   pr: number,
   since: string | null
 ): Promise<AgentsStatus> {
-  const octokit = getOctokit();
-  const configuredAgents = getDefaultAgents();
-  const sinceDate = since ? new Date(since) : null;
-
-  // Get issue comments and reviews to check for agent activity
-  // Use iterator-based pagination with early termination
-  const [issueComments, reviews] = await Promise.all([
-    paginateWithLimit(
-      octokit.paginate.iterator(octokit.issues.listComments, {
-        owner,
-        repo,
-        issue_number: pr,
-        per_page: 100
-      }),
-      200
-    ),
-    paginateWithLimit(
-      octokit.paginate.iterator(octokit.pulls.listReviews, {
-        owner,
-        repo,
-        pull_number: pr,
-        per_page: 100
-      }),
-      100
-    )
-  ]);
-
-  const agentStatuses: AgentStatus[] = configuredAgents.map(agentId => {
-    const config = INVOKABLE_AGENTS[agentId];
-    if (!config) {
-      // Safety guard for runtime consistency
-      return {
-        agentId,
-        name: agentId,
-        ready: false
-      };
-    }
-
-    const pattern = config.authorPattern;
-
-    // Filter comments by author and timestamp
-    const agentIssueComments = issueComments.filter(c =>
-      c.user &&
-      matchesAuthorPattern(c.user.login, pattern) &&
-      (!sinceDate || new Date(c.updated_at ?? c.created_at) > sinceDate)
-    );
-
-    // Filter reviews by author and timestamp
-    const agentReviews = reviews.filter(r =>
-      r.user &&
-      matchesAuthorPattern(r.user.login, pattern) &&
-      r.submitted_at !== null &&
-      r.submitted_at !== undefined &&
-      (!sinceDate || new Date(r.submitted_at) > sinceDate)
-    );
-
-    const hasActivity = agentIssueComments.length > 0 || agentReviews.length > 0;
-
-    // Find latest timestamp from filtered activity
-    let lastComment: string | undefined;
-    const allDates = [
-      ...agentIssueComments.map(c => c.updated_at ?? c.created_at),
-      ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null && d !== undefined)
-    ];
-    if (allDates.length > 0) {
-      const timestamps = allDates.map(d => new Date(d).getTime());
-      lastComment = new Date(Math.max(...timestamps)).toISOString();
-    }
-
-    return {
-      agentId,
-      name: config.name,
-      ready: hasActivity,
-      lastComment
-    };
-  });
-
-  const allAgentsReady = agentStatuses.every(a => a.ready);
-
-  return {
-    allAgentsReady,
-    agents: agentStatuses
-  };
+  return fetchAgentStatusForAgents(owner, repo, pr, getDefaultAgents(), since);
 }
 
 export async function fetchAgentStatusForAgents(
