@@ -53,7 +53,7 @@ graph TD
     Client -->|HTTP StreamableHTTP| Server
 
     subgraph Server["pr-review-mcp Server"]
-        Tools["Tool Handlers\n(18 tools)"]
+        Tools["Tool Handlers\n(19 tools)"]
         Prompts["Prompt Generators\n(3 prompts)"]
         Extractors["Extractors\n(severity · prompt · nitpick · multi-issue)"]
         Adapters["Source Adapters\n(Qodo · Greptile)"]
@@ -81,13 +81,14 @@ graph TD
 | `pr_get` | Full detail for a single comment thread, including extracted AI prompt and suggested fix. |
 | `pr_changes` | Incremental updates since a cursor — only new or changed threads. |
 | `pr_poll_updates` | Poll for new comments and agent completion status; designed for long-running review loops. |
+| `pr_await_reviews` | Block server-side until invoked agents post reviews (configurable timeout). Use after `pr_invoke` for automated review pipelines. |
 
 ### Action
 
 | Tool | Description |
 |------|-------------|
 | `pr_resolve` | Resolve a GitHub review thread via GraphQL mutation. |
-| `pr_invoke` | Trigger an AI agent to (re-)review the PR. Skips agents that already reviewed unless `force=true`. |
+| `pr_invoke` | Trigger an AI agent to (re-)review the PR. Skips agents that already reviewed unless `force=true`. Returns `since` + `invokedAgentIds` for `pr_await_reviews`. |
 | `pr_labels` | Add, remove, or list labels on a PR. |
 | `pr_reviewers` | Request or remove human or team reviewers. |
 | `pr_create` | Create a new pull request from branches with title, body, and labels. |

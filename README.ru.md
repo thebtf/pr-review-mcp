@@ -53,7 +53,7 @@ graph TD
     Client -->|HTTP StreamableHTTP| Server
 
     subgraph Server["pr-review-mcp Server"]
-        Tools["Tool Handlers\n(18 tools)"]
+        Tools["Tool Handlers\n(19 tools)"]
         Prompts["Prompt Generators\n(3 prompts)"]
         Extractors["Extractors\n(severity · prompt · nitpick · multi-issue)"]
         Adapters["Source Adapters\n(Qodo · Greptile)"]
@@ -81,13 +81,14 @@ graph TD
 | `pr_get` | Полные данные по одному треду комментариев, включая извлечённый AI-промпт и предложенное исправление. |
 | `pr_changes` | Инкрементальные обновления с момента курсора — только новые или изменённые треды. |
 | `pr_poll_updates` | Опрос новых комментариев и статуса завершения агентов; предназначен для длительных циклов ревью. |
+| `pr_await_reviews` | Серверная блокировка до завершения ревью агентами (настраиваемый таймаут). Используйте после `pr_invoke` для автоматизации. |
 
 ### Действия
 
 | Инструмент | Описание |
 |------------|----------|
 | `pr_resolve` | Закрыть тред ревью через GraphQL-мутацию. |
-| `pr_invoke` | Запустить AI-агент для (повторного) ревью PR. Пропускает агентов, уже выполнивших ревью, если не указан `force=true`. |
+| `pr_invoke` | Запустить AI-агент для (повторного) ревью PR. Пропускает агентов, уже выполнивших ревью, если не указан `force=true`. Возвращает `since` + `invokedAgentIds` для `pr_await_reviews`. |
 | `pr_labels` | Добавить, удалить или просмотреть метки PR. |
 | `pr_reviewers` | Запросить ревью от конкретных людей или команд или отменить запрос. |
 | `pr_create` | Создать новый Pull Request из веток с заголовком, описанием и метками. |
