@@ -1,77 +1,134 @@
 # AGENTS.md — PR Review MCP Server
 
-## 🎯 PURPOSE
+## PURPOSE
 
-MCP server for processing PR reviews from multiple AI code review agents (CodeRabbit, Gemini, Copilot, Sourcery, Qodo).
+MCP server for orchestrating AI-driven PR reviews with 7 agent sources, 19 tools, and parallel multi-agent coordination.
 
 **Features:**
 - GraphQL-based GitHub integration with cursor pagination
 - Multi-source comment detection and severity extraction
 - AI prompt extraction from review comments
-- Agent invocation (`pr_invoke`)
+- Agent invocation + server-side review await (`pr_invoke` → `pr_await_reviews`)
+- Parallel worker orchestration for comment processing
 
 ---
 
-## 🛑 LANGUAGE
+## LANGUAGE
 
 - **Communication with user:** RUSSIAN
 - **Code, commits, docs:** ENGLISH
 
 ---
 
-## 📁 PROJECT STRUCTURE
+## PROJECT STRUCTURE
 
 ```
 pr-review-mcp/
 ├── src/
-│   ├── server.ts           # MCP server entry point
+│   ├── server.ts              # MCP server entry point
+│   ├── logging.ts             # MCP logging utility
+│   ├── index.ts               # CLI entry point
 │   ├── github/
-│   │   ├── client.ts       # GitHub CLI wrapper
-│   │   ├── queries.ts      # GraphQL queries
-│   │   └── types.ts        # TypeScript types
+│   │   ├── client.ts          # GitHub GraphQL/REST client
+│   │   ├── octokit.ts         # Octokit instance management
+│   │   ├── queries.ts         # GraphQL queries
+│   │   ├── types.ts           # TypeScript types
+│   │   └── state-comment.ts   # State comment persistence
+│   ├── git/
+│   │   └── detect.ts          # Git repo/branch detection
 │   ├── tools/
-│   │   ├── summary.ts      # pr_summary tool
-│   │   ├── list.ts         # pr_list tool
-│   │   ├── get.ts          # pr_get tool
-│   │   ├── resolve.ts      # pr_resolve tool
-│   │   ├── changes.ts      # pr_changes tool
-│   │   ├── invoke.ts       # pr_invoke tool
-│   │   └── shared.ts       # Shared utilities
+│   │   ├── summary.ts         # pr_summary
+│   │   ├── list.ts            # pr_list
+│   │   ├── list-prs.ts        # pr_list_prs
+│   │   ├── get.ts             # pr_get
+│   │   ├── changes.ts         # pr_changes
+│   │   ├── poll.ts            # pr_poll_updates
+│   │   ├── await-reviews.ts   # pr_await_reviews
+│   │   ├── invoke.ts          # pr_invoke
+│   │   ├── resolve.ts         # pr_resolve
+│   │   ├── labels.ts          # pr_labels
+│   │   ├── reviewers.ts       # pr_reviewers
+│   │   ├── create.ts          # pr_create
+│   │   ├── merge.ts           # pr_merge
+│   │   ├── coordination.ts    # pr_claim_work, pr_report_progress, etc.
+│   │   └── shared.ts          # Shared utilities
+│   ├── monitors/
+│   │   └── review-monitor.ts  # ReviewMonitor (server-side polling)
 │   ├── adapters/
-│   │   ├── qodo.ts         # Qodo issue comment adapter
-│   │   └── greptile.ts     # Greptile issue comment adapter
+│   │   ├── qodo.ts            # Qodo issue comment adapter
+│   │   └── greptile.ts        # Greptile issue comment adapter
 │   ├── agents/
-│   │   ├── registry.ts     # Agent configurations
-│   │   ├── invoker.ts      # Agent invocation logic
-│   │   └── detector.ts     # Smart agent detection
-│   └── extractors/
-│       ├── severity.ts     # Severity extraction
-│       └── prompt.ts       # AI prompt extraction
-└── dist/                   # Compiled output
+│   │   ├── registry.ts        # Agent configurations
+│   │   ├── invoker.ts         # Agent invocation logic
+│   │   ├── detector.ts        # Smart agent detection
+│   │   └── status.ts          # Agent status detection (shared)
+│   ├── extractors/
+│   │   ├── severity.ts        # Severity extraction
+│   │   ├── prompt.ts          # AI prompt extraction
+│   │   ├── coderabbit-nitpicks.ts
+│   │   └── multi-issue.ts     # Multi-issue splitting
+│   ├── prompts/
+│   │   ├── review.ts          # Review orchestrator prompt
+│   │   └── setup.ts           # Setup wizard prompt
+│   ├── resources/
+│   │   └── pr.ts              # PR resource (pr://{owner}/{repo}/{pr})
+│   └── coordination/
+│       ├── state.ts           # Coordination state management
+│       └── types.ts           # Coordination types
+├── skills/
+│   └── review/
+│       └── SKILL.md           # PR review skill (Claude Code plugin)
+├── commands/
+│   ├── review.md              # Legacy review command
+│   └── setup.md               # Setup command
+└── dist/                      # Compiled output
 ```
 
 ---
 
-## 🔧 MCP TOOLS
+## MCP TOOLS (19)
+
+### Analysis
 
 | Tool | Description |
 |------|-------------|
-| `pr_summary` | Get PR statistics (total, resolved, by severity/file) |
-| `pr_list` | List comments with filtering (resolved, file, source) |
-| `pr_get` | Get full comment details + AI prompt |
-| `pr_resolve` | Mark review thread as resolved |
-| `pr_changes` | Incremental updates with cursor pagination |
-| `pr_invoke` | Invoke AI agents with smart detection (skips agents that already reviewed). Returns `since` timestamp for `pr_await_reviews`. |
-| `pr_await_reviews` | Block until invoked review agents complete. Server-side polling with MCP progress notifications. Use after `pr_invoke`. |
+| `pr_summary` | PR review statistics: total, resolved, unresolved, by severity/file |
+| `pr_list_prs` | List open PRs in a repository with activity stats |
+| `pr_list` | List review comments with filtering (resolved, file, source, severity) |
+| `pr_get` | Full comment details including body and AI prompt |
+| `pr_changes` | Incremental updates since cursor |
+| `pr_poll_updates` | Poll for new comments, commits, check status, agent completion |
+| `pr_await_reviews` | **Block server-side** until invoked agents post reviews (up to 10 min timeout). Use after `pr_invoke`. |
+
+### Action
+
+| Tool | Description |
+|------|-------------|
+| `pr_invoke` | Invoke AI review agents. Returns `since`, `invokedAgentIds`, `awaitHint` for handoff to `pr_await_reviews`. |
+| `pr_resolve` | Resolve a review thread |
+| `pr_labels` | Add, remove, or list labels |
+| `pr_reviewers` | Request or remove reviewers |
+| `pr_create` | Create a pull request |
+| `pr_merge` | Merge a PR (with MCP elicitation confirmation) |
+
+### Orchestration
+
+| Tool | Description |
+|------|-------------|
+| `pr_claim_work` | Claim file partition for parallel comment processing |
+| `pr_report_progress` | Report completion status for a claimed partition |
+| `pr_get_work_status` | Full run status: partition counts, per-agent progress |
+| `pr_reset_coordination` | Reset coordination state (with confirmation) |
+| `pr_progress_update` | Report orchestrator phase transition |
+| `pr_progress_check` | Read orchestrator phase history and run progress |
 
 ---
 
-## 🧪 TESTING
+## TESTING
 
 **MCP Protocol Testing** (NOT direct function calls):
 
 ```javascript
-// Spawn server and communicate via newline-delimited JSON
 const server = spawn('node', ['dist/index.js']);
 server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {...} }) + '\n');
 ```
@@ -80,7 +137,7 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 
 ---
 
-## 📝 AGENT SOURCES
+## AGENT SOURCES
 
 | Source | Type | Detection |
 |--------|------|-----------|
@@ -92,26 +149,18 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 | **Qodo** | **Issue comment** | `qodo-code-review[bot]` |
 | **Greptile** | **Issue comment + inline** | `greptile-code-reviews[bot]` |
 
-⚠️ Qodo uses a "persistent review" pattern — one issue comment updated on each commit.
-⚠️ Greptile posts an overview issue comment + inline review comments.
+Qodo uses a "persistent review" pattern — one issue comment updated on each commit.
+Greptile posts an overview issue comment + inline review comments.
 
 ---
 
-## 🧠 SMART DETECTION
+## SMART DETECTION
 
 `pr_invoke` includes smart detection to avoid re-invoking agents that already reviewed:
 
-**Default behavior:**
 - Detects agents that already submitted reviews (by author login)
 - Skips agents that already reviewed → returns in `skipped` array
 - Only CodeRabbit is invoked by default (configurable via `.github/pr-review.json`)
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `force: true` | Re-invoke agents even if they already reviewed |
-| `agent: "all"` | Invoke all configured agents (default: only CodeRabbit) |
-| `agent: "coderabbit"` | Invoke specific agent |
 
 **Response includes:**
 ```json
@@ -119,13 +168,15 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
   "invoked": ["CodeRabbit"],
   "skipped": ["Gemini", "Codex"],
   "failed": [],
-  "message": "Invoked: CodeRabbit. Skipped (already reviewed): Gemini, Codex"
+  "since": "2026-03-28T10:00:00.000Z",
+  "invokedAgentIds": ["coderabbit"],
+  "awaitHint": "Call pr_await_reviews with since=... and agents=[...] to wait for reviews."
 }
 ```
 
 ---
 
-## ⚠️ RULES
+## RULES
 
 | Rule | Description |
 |------|-------------|
@@ -137,7 +188,7 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 
 ---
 
-## 🚀 COMMANDS
+## COMMANDS
 
 ```bash
 # Build

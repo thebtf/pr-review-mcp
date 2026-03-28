@@ -1,6 +1,6 @@
 {
   "name": "pr-review-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Orchestrate AI-driven PR reviews at scale. Unified MCP interface for CodeRabbit, Gemini, Copilot, Sourcery, Qodo, Codex, and Greptile with parallel multi-agent coordination.",
   "author": {
     "name": "thebtf",
