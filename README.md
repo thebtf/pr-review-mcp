@@ -6,7 +6,7 @@
 [![npm version](https://img.shields.io/npm/v/pr-review-mcp)](https://www.npmjs.com/package/pr-review-mcp)
 [![CI](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 [![MCP SDK](https://img.shields.io/badge/MCP_SDK-1.25%2B-orange.svg)](https://modelcontextprotocol.io)
 <!-- redoc:end:badges -->
 
@@ -28,7 +28,7 @@ If you use Claude Code, Claude Desktop, or another MCP client to process GitHub 
 - `pr_await_reviews` adds a server-side wait loop for AI reviews, so clients no longer need to poll GitHub manually while agents finish posting.
 - `pr_invoke` now returns `since`, `invokedAgentIds`, and `awaitHint`, making the handoff into `pr_await_reviews` explicit and reliable.
 - Claude Code integration is stronger with [`skills/review/SKILL.md`](skills/review/SKILL.md), a dedicated skill that wraps `/pr:review` into an autonomous review workflow.
-- CI now runs build, tests, and coverage on Node 18, 20, and 22 through GitHub Actions.
+- CI now runs build, tests, and coverage on Node 20 and 22 through GitHub Actions.
 - Coverage reporting is part of the release baseline with `@vitest/coverage-v8`; v0.3.0 records 225 Vitest test cases and a 51.7% statement coverage baseline.
 - Qodo completion tracking is more accurate because persistent issue comments are detected via `updated_at`, not only `created_at`.
 - Agent status polling was simplified by extracting shared logic into `fetchAgentStatusForAgents`, removing duplicated code paths.
@@ -221,7 +221,7 @@ pr-review-mcp v0.3.0
 
 ### Prerequisites
 
-- Node.js `>=18.0.0`
+- Node.js `>=20.0.0`
 - A GitHub Personal Access Token with `repo` scope
 - An MCP client such as Claude Code, Claude Desktop, or MCP Inspector
 
@@ -326,7 +326,7 @@ pr-review-mcp --http 8080
   ```
 
 - Claude Code users can now rely on [`skills/review/SKILL.md`](skills/review/SKILL.md) for a richer `/pr:review` workflow.
-- CI now validates build, tests, and coverage on Node 18, 20, and 22, so local compatibility checks should target the same matrix.
+- CI now validates build, tests, and coverage on Node 20 and 22, so local compatibility checks should target the same matrix.
 <!-- redoc:end:upgrading -->
 
 <!-- redoc:start:configuration -->

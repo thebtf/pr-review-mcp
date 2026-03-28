@@ -6,7 +6,7 @@
 [![npm version](https://img.shields.io/npm/v/pr-review-mcp)](https://www.npmjs.com/package/pr-review-mcp)
 [![CI](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 [![MCP SDK](https://img.shields.io/badge/MCP_SDK-1.25%2B-orange.svg)](https://modelcontextprotocol.io)
 <!-- redoc:end:badges -->
 
@@ -28,7 +28,7 @@
 - `pr_await_reviews` добавляет серверный цикл ожидания AI-ревью, избавляя клиентов от необходимости вручную опрашивать GitHub, пока агенты публикуют комментарии.
 - `pr_invoke` теперь возвращает `since`, `invokedAgentIds` и `awaitHint`, делая передачу управления в `pr_await_reviews` явной и надёжной.
 - Интеграция с Claude Code стала глубже благодаря [`skills/review/SKILL.md`](skills/review/SKILL.md) — специализированному скиллу, оборачивающему `/pr:review` в автономный review-воркфлоу.
-- CI теперь запускает сборку, тесты и покрытие на Node 18, 20 и 22 через GitHub Actions.
+- CI теперь запускает сборку, тесты и покрытие на Node 20 и 22 через GitHub Actions.
 - Отчёты о покрытии включены в базовый контур релиза через `@vitest/coverage-v8`; в v0.3.0 зафиксировано 225 тест-кейсов Vitest и базовое покрытие инструкций 51,7%.
 - Отслеживание завершения Qodo стало точнее: персистентные issue-комментарии теперь определяются по `updated_at`, а не только по `created_at`.
 - Опрос статуса агентов упрощён путём выделения общей логики в `fetchAgentStatusForAgents` и удаления дублированных путей выполнения.
@@ -221,7 +221,7 @@ pr-review-mcp v0.3.0
 
 ### Требования
 
-- Node.js `>=18.0.0`
+- Node.js `>=20.0.0`
 - GitHub Personal Access Token с областью `repo`
 - MCP-клиент: Claude Code, Claude Desktop или MCP Inspector
 
@@ -326,7 +326,7 @@ pr-review-mcp --http 8080
   ```
 
 - Пользователи Claude Code теперь могут опираться на [`skills/review/SKILL.md`](skills/review/SKILL.md) для расширенного воркфлоу `/pr:review`.
-- CI теперь проверяет сборку, тесты и покрытие на Node 18, 20 и 22, поэтому локальные проверки совместимости должны ориентироваться на ту же матрицу.
+- CI теперь проверяет сборку, тесты и покрытие на Node 20 и 22, поэтому локальные проверки совместимости должны ориентироваться на ту же матрицу.
 <!-- redoc:end:upgrading -->
 
 <!-- redoc:start:configuration -->
