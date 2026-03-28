@@ -1,140 +1,245 @@
-[English](README.md) | **Русский** | [中文](README.zh.md)
+<!-- redoc:start:language-switcher -->
+[English](README.md) | **Русский**
+<!-- redoc:end:language-switcher -->
 
+<!-- redoc:start:badges -->
 [![npm version](https://img.shields.io/npm/v/pr-review-mcp)](https://www.npmjs.com/package/pr-review-mcp)
+[![CI](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/thebtf/pr-review-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 [![MCP SDK](https://img.shields.io/badge/MCP_SDK-1.25%2B-orange.svg)](https://modelcontextprotocol.io)
+<!-- redoc:end:badges -->
 
+<!-- redoc:start:title -->
 # pr-review-mcp
 
-MCP-сервер для оркестрации AI-ревью Pull Request'ов в масштабе.
+Единая MCP-плоскость управления для AI-ревью Pull Request'ов на GitHub.
+<!-- redoc:end:title -->
 
-## Зачем это нужно
+<!-- redoc:start:intro -->
+Современные Pull Request'ы нередко привлекают сразу нескольких AI-ревьюеров, однако их комментарии поступают в разных форматах, из разных мест и в разное время. `pr-review-mcp` превращает этот поток в единый MCP-нативный рабочий процесс: нормализует вывод семи источников агентов, предоставляет 19 специализированных инструментов и добавляет примитивы оркестрации для параллельной обработки ревью.
 
-Современные CI/CD-пайплайны подключают к каждому PR сразу несколько AI-ревьюеров — CodeRabbit, Gemini, Copilot, Sourcery, Qodo, Greptile — и те генерируют поток комментариев, который ни один агент не в состоянии обработать связно. `pr-review-mcp` решает задачу координации: предоставляет единый MCP-интерфейс поверх GitHub GraphQL API, нормализует комментарии от всех поддерживаемых агентов к единой схеме и даёт готовые примитивы для параллельной мультиагентной оркестрации ревью. Специализированный набор инструментов позволяет рабочим агентам захватывать разделы файлов, отчитываться о прогрессе и не конфликтовать между собой — без какой-либо внешней инфраструктуры. В итоге один сервер превращает шумный AI-вывод в упорядоченный и действенный рабочий процесс.
+Если вы используете Claude Code, Claude Desktop или другой MCP-клиент для обработки GitHub-ревью, этот сервер даёт вам одно место, где можно просматривать замечания, инспектировать детали, запускать агентов, ждать их ответа на стороне сервера и координировать рабочие агенты — без необходимости строить собственный review-пайплайн.
+<!-- redoc:end:intro -->
 
-## Ключевые возможности
+<!-- redoc:start:whats-new -->
+## Что нового в v0.3.0
 
-**Интеграция с GitHub**
-- GraphQL-пагинация с курсором — ни один комментарий не теряется даже на больших PR
-- Параллельная загрузка тредов и issue-комментариев
-- ResourceTemplate с парсингом URI-шаблонов (`pr://{owner}/{repo}/{pr}`)
-- Оптимизированная загрузка одного треда для `pr_get`
+- `pr_await_reviews` добавляет серверный цикл ожидания AI-ревью, избавляя клиентов от необходимости вручную опрашивать GitHub, пока агенты публикуют комментарии.
+- `pr_invoke` теперь возвращает `since`, `invokedAgentIds` и `awaitHint`, делая передачу управления в `pr_await_reviews` явной и надёжной.
+- Интеграция с Claude Code стала глубже благодаря [`skills/review/SKILL.md`](skills/review/SKILL.md) — специализированному скиллу, оборачивающему `/pr:review` в автономный review-воркфлоу.
+- CI теперь запускает сборку, тесты и покрытие на Node 18, 20 и 22 через GitHub Actions.
+- Отчёты о покрытии включены в базовый контур релиза через `@vitest/coverage-v8`; в v0.3.0 зафиксировано 225 тест-кейсов Vitest и базовое покрытие инструкций 51,7%.
+- Отслеживание завершения Qodo стало точнее: персистентные issue-комментарии теперь определяются по `updated_at`, а не только по `created_at`.
+- Опрос статуса агентов упрощён путём выделения общей логики в `fetchAgentStatusForAgents` и удаления дублированных путей выполнения.
+- В рамках работы по укреплению релиза устранено десять уязвимостей зависимостей.
+<!-- redoc:end:whats-new -->
 
-**Нормализация комментариев из разных источников**
-- Единая схема комментариев для всех 7 источников агентов
-- Извлечение nitpick-комментариев CodeRabbit и разбивка multi-issue
-- Отслеживание персистентных комментариев Qodo между коммитами
-- Парсинг HTML и Markdown от Greptile (обзор + инлайн)
+<!-- redoc:start:features -->
+## Возможности
 
-**Структурированный вывод**
-- `outputSchema` + `structuredContent` на 5 инструментах для машиночитаемых ответов
-- MCP elicitation для деструктивных операций (`pr_merge`, `pr_reset_coordination`)
+- **Автоматизирует мультиагентные рабочие процессы ревью PR** с помощью 19 MCP-инструментов, 3 промптов и 1 динамического PR-ресурса.
+- **Устраняет фрагментацию источников ревью**, нормализуя комментарии от CodeRabbit, Gemini, Copilot, Sourcery, Qodo, Codex и Greptile.
+- **Исключает polling-циклы в клиентах** с помощью `pr_await_reviews` — серверного монитора завершения работы агентов.
+- **Безопасно координирует параллельные рабочие агенты** через захват разделов файлов, отчётность о прогрессе и проверки статуса оркестрации.
+- **Предоставляет машиночитаемые данные ревью** через структурированный вывод ключевых инструментов: `pr_summary`, `pr_list`, `pr_get`, `pr_get_work_status` и `pr_progress_check`.
+- **Поддерживает локальные и общие деплои** через `stdio` по умолчанию и StreamableHTTP с `pr-review-mcp --http` или `pr-review-mcp --http 8080`.
+- **Защищает рабочие процессы** с помощью потоков подтверждения для деструктивных операций — слияния и сброса координации.
+- **Поставляется с ассетами Claude Code**, включая `.claude-plugin/plugin.json`, `.mcp.json` и скилл ревью для оркестрации через slash-команды.
+<!-- redoc:end:features -->
 
-**Оркестрация**
-- Захват разделов на уровне файлов с диспетчеризацией по приоритету серьёзности
-- Обновление разделов, когда агенты добавляют новые комментарии в ходе выполнения
-- Отслеживание фаз оркестратора через `pr_progress_update` / `pr_progress_check`
-- Очистка просроченных запусков по неактивности (порог — 30 минут)
-- Автозамена устаревших запусков (порог — 5 минут)
-
-**Транспорт и надёжность**
-- Транспорт stdio (по умолчанию) и HTTP через StreamableHTTP (`--http [port]`)
-- Circuit breaker и rate limiting на вызовах GitHub API
-- Умное определение агентов — пропуск уже проверивших PR агентов (`pr_invoke`)
-
+<!-- redoc:start:architecture -->
 ## Архитектура
 
 ```mermaid
 graph TD
-    Client["MCP Client (Claude Code / Claude Desktop)"]
+    Client["MCP Client<br/>Claude Code / Claude Desktop / Inspector"]
 
     Client -->|stdio| Server
-    Client -->|HTTP StreamableHTTP| Server
+    Client -->|StreamableHTTP| Server
 
-    subgraph Server["pr-review-mcp Server"]
-        Tools["Tool Handlers\n(19 tools)"]
-        Prompts["Prompt Generators\n(3 prompts)"]
-        Extractors["Extractors\n(severity · prompt · nitpick · multi-issue)"]
-        Adapters["Source Adapters\n(Qodo · Greptile)"]
-        Coordination["Coordination State\n(partitions · progress · phases)"]
+    subgraph Server["pr-review-mcp v0.3.0"]
+        subgraph Interface["MCP Interface"]
+            Resource["Resource<br/>pr://{owner}/{repo}/{pr}"]
+            PromptReview["Prompt<br/>review"]
+            PromptReviewBg["Prompt<br/>review-background"]
+            PromptSetup["Prompt<br/>setup"]
+        end
+
+        subgraph Analysis["Analysis Tools (7)"]
+            T1["pr_summary"]
+            T2["pr_list_prs"]
+            T3["pr_list"]
+            T4["pr_get"]
+            T5["pr_changes"]
+            T6["pr_poll_updates"]
+            T7["pr_await_reviews"]
+        end
+
+        subgraph Action["Action Tools (6)"]
+            T8["pr_invoke"]
+            T9["pr_resolve"]
+            T10["pr_labels"]
+            T11["pr_reviewers"]
+            T12["pr_create"]
+            T13["pr_merge"]
+        end
+
+        subgraph Orchestration["Orchestration Tools (6)"]
+            T14["pr_claim_work"]
+            T15["pr_report_progress"]
+            T16["pr_get_work_status"]
+            T17["pr_reset_coordination"]
+            T18["pr_progress_update"]
+            T19["pr_progress_check"]
+        end
+
+        Monitor["ReviewMonitor<br/>server-side wait + backoff"]
+        Extractors["Extractors<br/>severity / prompt / nitpick / multi-issue"]
+        Adapters["Adapters<br/>Qodo / Greptile"]
+        State["Coordination State<br/>partitions / progress / phases"]
     end
 
-    Tools --> Extractors
-    Tools --> Adapters
-    Tools --> Coordination
-    Prompts --> Tools
+    PromptReview --> T8
+    PromptReview --> T14
+    PromptReview --> T18
+    PromptReviewBg --> T18
+    PromptSetup --> T8
+    Resource --> T1
+    Analysis --> Monitor
+    Analysis --> Extractors
+    Action --> Adapters
+    Orchestration --> State
+    Monitor --> State
 
-    Server -->|GraphQL / REST| GitHub["GitHub API"]
-    Coordination -->|partition assignments| Workers["Parallel Worker Agents"]
+    Server --> GitHub["GitHub GraphQL + REST API"]
+    State --> Workers["Parallel Worker Agents"]
 ```
+<!-- redoc:end:architecture -->
 
+<!-- redoc:start:tools -->
 ## Инструменты
 
 ### Анализ
 
 | Инструмент | Описание |
 |------------|----------|
-| `pr_summary` | Общая статистика: количество комментариев — всего, закрытых, открытых, устаревших; разбивка по серьёзности и файлам; итоговые данные по nitpick. |
-| `pr_list` | Список комментариев к ревью с фильтрацией по статусу, пути к файлу, источнику агента и серьёзности. |
-| `pr_list_prs` | Список открытых Pull Request'ов в репозитории со статистикой активности. |
-| `pr_get` | Полные данные по одному треду комментариев, включая извлечённый AI-промпт и предложенное исправление. |
-| `pr_changes` | Инкрементальные обновления с момента курсора — только новые или изменённые треды. |
-| `pr_poll_updates` | Опрос новых комментариев и статуса завершения агентов; предназначен для длительных циклов ревью. |
-| `pr_await_reviews` | Серверная блокировка до завершения ревью агентами (настраиваемый таймаут). Используйте после `pr_invoke` для автоматизации. |
+| `pr_summary` | Возвращает общее число ревью-замечаний, счётчики разрешённых, разбивку по серьёзности, горячие файлы и статистику nitpick. |
+| `pr_list_prs` | Список открытых Pull Request'ов в репозитории с активностью ревью и статистикой изменений. |
+| `pr_list` | Перечисляет ревью-комментарии с фильтрами по статусу разрешения, файлу, источнику и серьёзности. |
+| `pr_get` | Получает полные детали одного ревью-треда, включая исходное тело и извлечённые данные промпта. |
+| `pr_changes` | Возвращает инкрементальные обновления ревью начиная с курсора для облегчённых refresh-воркфлоу. |
+| `pr_poll_updates` | Опрашивает комментарии, коммиты и изменения статуса агентов для неблокирующего цикла обновлений. |
+| `pr_await_reviews` | Блокирует выполнение на стороне сервера до тех пор, пока выбранные агенты не опубликуют обновления или не истечёт таймаут. |
 
 ### Действия
 
 | Инструмент | Описание |
 |------------|----------|
-| `pr_resolve` | Закрыть тред ревью через GraphQL-мутацию. |
-| `pr_invoke` | Запустить AI-агент для (повторного) ревью PR. Пропускает агентов, уже выполнивших ревью, если не указан `force=true`. Возвращает `since` + `invokedAgentIds` для `pr_await_reviews`. |
-| `pr_labels` | Добавить, удалить или просмотреть метки PR. |
-| `pr_reviewers` | Запросить ревью от конкретных людей или команд или отменить запрос. |
-| `pr_create` | Создать новый Pull Request из веток с заголовком, описанием и метками. |
-| `pr_merge` | Слить PR (squash / merge / rebase) с предварительными проверками безопасности. Использует MCP elicitation для подтверждения деструктивного слияния. |
+| `pr_invoke` | Запускает одного агента или всех настроенных агентов для прогона ревью PR. |
+| `pr_resolve` | Разрешает GitHub ревью-тред после устранения замечания. |
+| `pr_labels` | Перечисляет, добавляет, удаляет или устанавливает метки Pull Request'а. |
+| `pr_reviewers` | Запрашивает или снимает запрос ревью у людей и команд в Pull Request'е. |
+| `pr_create` | Создаёт новый Pull Request из существующих веток. |
+| `pr_merge` | Выполняет слияние Pull Request'а с проверками безопасности с подтверждением. |
 
 ### Оркестрация
 
 | Инструмент | Описание |
 |------------|----------|
-| `pr_claim_work` | Захватить следующий ожидающий раздел файлов для рабочего агента. При первом вызове инициализирует запуск. |
-| `pr_report_progress` | Сообщить статус `done`, `failed` или `skipped` для захваченного раздела. |
-| `pr_get_work_status` | Просмотреть полный статус запуска: количество разделов, прогресс по агентам, ожидающие AI-агенты, флаг завершения. |
-| `pr_reset_coordination` | Сбросить всё состояние оркестрации. Требует явного `confirm=true` (MCP elicitation). |
-| `pr_progress_update` | Обновить текущую фазу и строку детализации оркестратора для внешнего мониторинга. |
-| `pr_progress_check` | Прочитать историю фаз оркестратора и прогресс выполнения в одном вызове. |
+| `pr_claim_work` | Захватывает следующий ожидающий файловый раздел для рабочего агента. |
+| `pr_report_progress` | Сообщает статус завершения, сбоя или пропуска для захваченного раздела. |
+| `pr_get_work_status` | Инспектирует текущий запуск координации, количество разделов, проверенных и ожидающих агентов. |
+| `pr_reset_coordination` | Очищает активный запуск координации после явного подтверждения. |
+| `pr_progress_update` | Публикует переходы фаз оркестратора для фоновых воркфлоу. |
+| `pr_progress_check` | Читает историю фаз оркестратора и прогресс координации в одном вызове. |
+<!-- redoc:end:tools -->
 
+<!-- redoc:start:prompts -->
 ## Промпты
 
-| Промпт | Команда | Описание |
-|--------|---------|----------|
-| `review` | `/pr:review` | Автономный мультиагентный оркестратор ревью PR. Принимает номер PR, URL или сокращение `owner/repo#N`. Запускает параллельные рабочие агенты, каждый из которых захватывает разделы файлов через `pr_claim_work`. Поддерживает пакетный режим (все открытые PR), если PR не указан. |
-| `review-background` | `/pr:review-background` | Фоновое ревью в режиме «запустить и забыть». Ведёт собственный TaskList для отображения прогресса, не блокируя основной поток агента. |
-| `setup` | `/pr:setup` | Интерактивный мастер настройки `.github/pr-review.json` — выбор агентов, настройка переменных окружения и приоритетов ревью. |
+| Промпт | Slash-команда | Описание |
+|--------|---------------|----------|
+| `review` | `/pr:review` | Основной автономный оркестратор ревью PR по номеру, URL или `owner/repo#N`. |
+| `review-background` | `/pr:review-background` | Вариант «запустить и забыть», ведущий собственное отслеживание прогресса без блокировки основного чат-треда. |
+| `setup` | `/pr:setup` | Интерактивный промпт для настройки ревью на уровне репозитория и параметров агентов по умолчанию. |
+<!-- redoc:end:prompts -->
 
+<!-- redoc:start:resources -->
+## Ресурсы
+
+`pr://{owner}/{repo}/{pr}` — динамический MCP-ресурс, возвращающий метаданные Pull Request'а и актуальную сводку ревью в одном JSON-пакете. Используйте его, когда клиенту нужен машиночитаемый снимок без выполнения нескольких вызовов инструментов.
+
+Пример URI:
+
+```text
+pr://thebtf/pr-review-mcp/2
+```
+
+Возвращаемые данные включают метаданные PR — заголовок, статус, автора, имена веток, возможность слияния, решение по ревью, временные метки — и те же сводные измерения, что предоставляет `pr_summary`.
+<!-- redoc:end:resources -->
+
+<!-- redoc:start:quick-start -->
 ## Быстрый старт
+
+1. Установите сервер:
+
+   ```bash
+   npm install -g pr-review-mcp
+   ```
+
+2. Добавьте его в конфигурацию MCP-клиента:
+
+   ```json
+   {
+     "mcpServers": {
+       "pr": {
+         "command": "pr-review-mcp",
+         "env": {
+           "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
+         }
+       }
+     }
+   }
+   ```
+
+3. Проверьте бинарник и версию:
+
+   ```bash
+   pr-review-mcp --version
+   ```
+
+Ожидаемый вывод:
+
+```text
+pr-review-mcp v0.3.0
+```
+<!-- redoc:end:quick-start -->
+
+<!-- redoc:start:installation -->
+## Установка
 
 ### Требования
 
-- Node.js 18 или новее
-- GitHub Personal Access Token с правами `repo`
+- Node.js `>=18.0.0`
+- GitHub Personal Access Token с областью `repo`
+- MCP-клиент: Claude Code, Claude Desktop или MCP Inspector
 
-### Установка
+### Глобальная установка через npm
 
 ```bash
 npm install -g pr-review-mcp
 ```
 
-Для обновления до последней версии:
+### Проверка установки
 
 ```bash
-npm install -g pr-review-mcp@latest
+pr-review-mcp --version
 ```
 
-### Настройка MCP-клиента
+### Конфигурация MCP-клиента
 
-Добавьте в `~/.claude/settings.json` (Claude Code) или `claude_desktop_config.json` (Claude Desktop):
+Используйте глобально установленный бинарник в конфиге клиента:
 
 ```json
 {
@@ -149,31 +254,23 @@ npm install -g pr-review-mcp@latest
 }
 ```
 
-Токен привязан к этому серверу — глобальная переменная окружения не нужна.
-
-### HTTP-режим
-
-```bash
-node dist/index.js --http 8080
-```
-
-Запускает StreamableHTTP-сервер на порту 8080. Удобно для удалённых агентов или командных деплоев.
-
-<details>
-<summary>Альтернатива: запуск из локального клона</summary>
+### Альтернатива: запуск из локального клона
 
 ```bash
 git clone https://github.com/thebtf/pr-review-mcp.git
 cd pr-review-mcp
-npm install && npm run build
+npm install
+npm run build
 ```
+
+При запуске из клона укажите в клиенте путь к скомпилированной точке входа:
 
 ```json
 {
   "mcpServers": {
     "pr": {
       "command": "node",
-      "args": ["/path/to/pr-review-mcp/dist/index.js"],
+      "args": ["D:/path/to/pr-review-mcp/dist/index.js"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
       }
@@ -182,119 +279,261 @@ npm install && npm run build
 }
 ```
 
-Для обновления: `git pull && npm install && npm run build`
+### HTTP-режим
 
-</details>
+Запуск StreamableHTTP-сервера на порту по умолчанию:
 
-## Источники агентов
+```bash
+pr-review-mcp --http
+```
 
-| Агент | Паттерн определения | Тип комментария |
-|-------|---------------------|-----------------|
-| CodeRabbit | `coderabbitai[bot]` | Инлайн-треды ревью |
-| Gemini | `gemini-code-assist[bot]` | Инлайн-треды ревью |
-| Copilot | `copilot-pull-request-reviewer[bot]` | Инлайн-треды ревью |
-| Sourcery | `sourcery-ai[bot]` | Инлайн-треды ревью |
-| Codex | `chatgpt-codex-connector[bot]` | Инлайн-треды ревью |
-| Qodo | `qodo-code-review[bot]` | Issue-комментарий (персистентный, обновляется при каждом коммите) |
-| Greptile | `greptile-apps[bot]` | Issue-комментарий (обзор) + инлайн-треды ревью |
+Или с явным указанием порта:
 
-Qodo использует паттерн персистентного ревью: один issue-комментарий, который обновляется при каждом новом коммите вместо публикации новых. Greptile публикует сводный issue-комментарий вместе со стандартными инлайн-тредами ревью.
+```bash
+pr-review-mcp --http 8080
+```
+<!-- redoc:end:installation -->
 
+<!-- redoc:start:upgrading -->
+## Обновление
+
+### С v0.2.x до v0.3.0
+
+- Обновите пакет:
+
+  ```bash
+  npm install -g pr-review-mcp@0.3.0
+  ```
+
+- Если ваша клиентская автоматизация ожидает ответа агентов, перейдите от ручных polling-циклов к новому паттерну:
+  1. Вызовите `pr_invoke`
+  2. Прочитайте `since` и `invokedAgentIds` из ответа
+  3. Передайте эти значения в `pr_await_reviews`
+
+- Если вы копировали старые примеры из README, перенесите конфигурацию репозитория во вложенный формат, который действительно использует `pr_invoke`:
+
+  ```json
+  {
+    "version": 1,
+    "invoke": {
+      "agents": ["coderabbit", "gemini", "codex"],
+      "defaults": {
+        "focus": "best-practices",
+        "incremental": true
+      }
+    }
+  }
+  ```
+
+- Пользователи Claude Code теперь могут опираться на [`skills/review/SKILL.md`](skills/review/SKILL.md) для расширенного воркфлоу `/pr:review`.
+- CI теперь проверяет сборку, тесты и покрытие на Node 18, 20 и 22, поэтому локальные проверки совместимости должны ориентироваться на ту же матрицу.
+<!-- redoc:end:upgrading -->
+
+<!-- redoc:start:configuration -->
 ## Конфигурация
 
-Создайте `.github/pr-review.json` в своём репозитории (или используйте `/pr:setup` для интерактивной генерации):
+### Переменные окружения
+
+| Переменная | Обязательна | По умолчанию | Описание |
+|------------|-------------|--------------|----------|
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | Да | — | GitHub Personal Access Token с областью `repo`. Сервер завершается при отсутствии. |
+| `PR_REVIEW_AGENTS` | Нет | `coderabbit` | Идентификаторы агентов через запятую, используемые когда `pr_invoke` разрешает `agent: "all"` без конфигурации репозитория. |
+| `PR_REVIEW_MODE` | Нет | `sequential` | Режим запуска ревью: `sequential` или `parallel`. |
+
+Допустимые идентификаторы агентов: `coderabbit`, `sourcery`, `qodo`, `gemini`, `codex`, `copilot`, `greptile`.
+
+### Конфигурация репозитория
+
+Создайте `.github/pr-review.json` в проверяемом репозитории для определения значений по умолчанию:
 
 ```json
 {
-  "agents": ["coderabbit", "gemini"],
-  "mode": "sequential",
-  "priority": "severity"
+  "version": 1,
+  "invoke": {
+    "agents": ["coderabbit", "gemini", "codex"],
+    "defaults": {
+      "focus": "best-practices",
+      "incremental": true
+    }
+  }
 }
 ```
 
-Переменные окружения переопределяют файл конфигурации:
+Порядок разрешения конфигурации:
 
-| Переменная | По умолчанию | Описание |
-|------------|--------------|----------|
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | — | Обязательно. GitHub PAT с правами `repo`. |
-| `PR_REVIEW_AGENTS` | `coderabbit` | ID агентов через запятую для вызова по умолчанию. |
-| `PR_REVIEW_MODE` | `sequential` | `sequential` или `parallel` — режим запуска ревью. |
+1. `.github/pr-review.json`
+2. `PR_REVIEW_AGENTS` и `PR_REVIEW_MODE`
+3. Встроенные значения по умолчанию (`coderabbit`, `sequential`)
 
-Допустимые ID агентов: `coderabbit`, `gemini`, `copilot`, `sourcery`, `qodo`, `codex`, `greptile`.
+`invoke.defaults` напрямую соответствует `options`, принимаемым `pr_invoke`, поэтому можно заранее задать значения `focus` и `incremental` на уровне репозитория.
+<!-- redoc:end:configuration -->
 
-## Примеры
+<!-- redoc:start:usage -->
+## Использование
 
-### Получить сводку PR
+### Воркфлоу 1: Инспекция одного PR
 
-Вызов инструмента:
+Используйте инструменты анализа для получения сводки и детального изучения состояния ревью:
+
 ```json
 {
   "name": "pr_summary",
   "arguments": {
-    "owner": "myorg",
-    "repo": "myrepo",
-    "pr": 42
+    "owner": "thebtf",
+    "repo": "pr-review-mcp",
+    "pr": 2
   }
 }
 ```
 
-Ответ:
+Затем перечислите неразрешённые замечания:
+
 ```json
 {
-  "pr": "myorg/myrepo#42",
-  "total": 45,
-  "resolved": 38,
-  "unresolved": 7,
-  "outdated": 2,
-  "bySeverity": {
-    "CRIT": 1,
-    "MAJOR": 4,
-    "MINOR": 40
-  },
-  "byFile": {
-    "src/auth/token.ts": 5,
-    "src/api/routes.ts": 3
-  },
-  "nitpicks": {
-    "total": 12,
-    "resolved": 10
+  "name": "pr_list",
+  "arguments": {
+    "owner": "thebtf",
+    "repo": "pr-review-mcp",
+    "pr": 2,
+    "resolved": false
   }
 }
 ```
 
-### Запустить AI-ревьюер
+### Воркфлоу 2: Запуск агентов и ожидание на стороне сервера
+
+Запустите одного или нескольких AI-ревьюеров:
 
 ```json
 {
   "name": "pr_invoke",
   "arguments": {
-    "owner": "myorg",
-    "repo": "myrepo",
-    "pr": 42,
-    "agent": "coderabbit"
+    "owner": "thebtf",
+    "repo": "pr-review-mcp",
+    "pr": 2,
+    "agent": "all"
   }
 }
 ```
 
-Ответ, когда агент уже выполнил ревью:
+Используйте возвращённые `since` и `invokedAgentIds` в `pr_await_reviews`:
+
 ```json
 {
-  "invoked": [],
-  "skipped": ["CodeRabbit"],
-  "failed": [],
-  "message": "Skipped (already reviewed): CodeRabbit. Use force=true to re-invoke."
+  "name": "pr_await_reviews",
+  "arguments": {
+    "owner": "thebtf",
+    "repo": "pr-review-mcp",
+    "pr": 2,
+    "since": "2026-03-28T10:00:00.000Z",
+    "agents": ["coderabbit", "gemini"],
+    "timeoutMs": 600000,
+    "pollIntervalMs": 30000
+  }
 }
 ```
 
-### Запустить оркестрованное ревью
+### Воркфлоу 3: Оркестрованное параллельное ревью
 
-В Claude Code выполните:
+В Claude Code запустите оркестратор:
+
+```text
+/pr:review 2
 ```
-/pr:review 42
+
+Под капотом промпт использует инструменты оркестрации `pr_claim_work`, `pr_report_progress`, `pr_progress_update` и `pr_progress_check` для распределения неразрешённых разделов комментариев по рабочим агентам и отслеживания прогресса до завершения обработки ревью.
+<!-- redoc:end:usage -->
+
+<!-- redoc:start:claude-code-integration -->
+## Интеграция с Claude Code
+
+Репозиторий поставляется с ассетами Claude Code:
+
+- [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) объявляет метаданные упакованного плагина и загрузку MCP-сервера.
+- [`.mcp.json`](.mcp.json) предоставляет конфигурацию MCP-сервера, указывающую на скомпилированный `dist/index.js`.
+- [`skills/review/SKILL.md`](skills/review/SKILL.md) определяет скилл ревью, используемый `/pr:review`.
+
+Доступные slash-команды:
+
+- `/pr:review`
+- `/pr:review-background`
+- `/pr:setup`
+
+Минимальная конфигурация Claude Code с глобальным бинарником:
+
+```json
+{
+  "mcpServers": {
+    "pr": {
+      "command": "pr-review-mcp",
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
+```
+<!-- redoc:end:claude-code-integration -->
+
+<!-- redoc:start:agent-sources -->
+## Источники агентов
+
+| Источник | Паттерн бота | Тип комментария | Примечания |
+|----------|--------------|-----------------|------------|
+| CodeRabbit | `coderabbitai[bot]` | Инлайн ревью-треды | Поддерживает focus, фильтрацию файлов и инкрементальное ревью. |
+| Gemini | `gemini-code-assist[bot]` | Инлайн ревью-треды | Запускается через mention-based команды ревью. |
+| Copilot | `copilot-pull-request-reviewer[bot]` | Инлайн ревью-треды | Разбирается как стандартный источник ревью-тредов. |
+| Sourcery | `sourcery-ai[bot]`, `sourcery-ai-experiments[bot]` | Инлайн ревью-треды | Детектирование принимает оба паттерна — production и experiments. |
+| Qodo | `qodo-code-review[bot]` | Issue-комментарий | Персистентный комментарий ревью, обновляемый при каждом коммите; готовность определяется по `updated_at`. |
+| Codex | `chatgpt-codex-connector[bot]` | Инлайн ревью-треды | Mention-based запуск, разбирается как обычный источник ревью. |
+| Greptile | `greptile-apps[bot]` | Issue-обзор плюс инлайн ревью-треды | Публикует обзорный issue-комментарий и может добавлять инлайн-замечания. |
+
+Qodo и Greptile обрабатываются через специализированные адаптеры, поскольку их поведение отличается от простых источников инлайн-ревью.
+<!-- redoc:end:agent-sources -->
+
+<!-- redoc:start:troubleshooting -->
+## Устранение неполадок
+
+### `GITHUB_PERSONAL_ACCESS_TOKEN` отсутствует
+
+Сервер проверяет предварительные условия при запуске и завершает работу, если токен не настроен. Добавьте токен в блок `env` записи MCP-сервера и перезапустите клиент.
+
+### `.github/pr-review.json` как будто игнорируется
+
+`pr_invoke` читает только вложенную конфигурацию в `invoke.agents` и `invoke.defaults`. Невалидный JSON откатывается к агентам по умолчанию, поэтому проверьте структуру файла перед тем, как считать конфигурацию репозитория активной.
+
+### HTTP-режим не запускается
+
+Используйте упакованную точку входа CLI:
+
+```bash
+pr-review-mcp --http
 ```
 
-Промпт получает текущее состояние ревью, разбивает нерешённые комментарии на разделы по файлам и запускает параллельные рабочие агенты — каждый вызывает `pr_claim_work` для захвата раздела, обрабатывает его и отчитывается через `pr_report_progress`.
+Или:
 
+```bash
+pr-review-mcp --http 8080
+```
+
+При запуске из клона сначала выполните сборку и запустите через `node dist/index.js --http`.
+
+### Агент не отвечает
+
+- Убедитесь, что агент включён через `.github/pr-review.json` или `PR_REVIEW_AGENTS`.
+- Проверьте, не проверял ли агент уже этот PR; `pr_invoke` пропускает проверенных агентов, если не установлен флаг `force`.
+- Используйте `pr_await_reviews` для блокирующего ожидания или `pr_poll_updates`, если клиенту нужно периодическое обновление статуса.
+- Для Qodo помните, что новая активность может обновить один персистентный issue-комментарий, а не создать новые ревью-треды.
+<!-- redoc:end:troubleshooting -->
+
+<!-- redoc:start:contributing -->
+## Участие в разработке
+
+Мы рады вкладу участников. Начните с [CONTRIBUTING.md](CONTRIBUTING.md) — там описаны настройка среды, правила валидации и процесс отправки PR.
+<!-- redoc:end:contributing -->
+
+<!-- redoc:start:license -->
 ## Лицензия
 
-MIT © [thebtf](https://github.com/thebtf)
+MIT. См. [LICENSE](LICENSE).
+<!-- redoc:end:license -->
