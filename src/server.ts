@@ -431,24 +431,6 @@ export class PRReviewMCPServer {
       catch (e) { throw toMcpError(e); }
     });
 
-    this.mcpServer.registerTool('pr_await_reviews', {
-      title: 'Await AI Review Agent Completion',
-      description: 'Wait for specified AI agents to post review activity on a PR.',
-      inputSchema: AwaitInputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try {
-        const result = await prAwaitReviews(args, this.reviewMonitor);
-        if (result.completed) {
-          this.mcpServer.server.sendResourceUpdated({
-            uri: `pr://${args.owner}/${args.repo}/${args.pr}`,
-          });
-        }
-        return PRReviewMCPServer.textResult(result);
-      } catch (e) {
-        throw toMcpError(e);
-      }
-    });
   }
 
   // --------------------------------------------------------------------------

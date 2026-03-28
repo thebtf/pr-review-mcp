@@ -194,28 +194,34 @@ export class ReviewMonitor {
   }
 
   private isThrottlingError(error: unknown): boolean {
+    // 429 is always rate limit. 403 is rate limit ONLY if message contains
+    // "rate limit" or "abuse detection" — otherwise it's an auth/permission error.
     const status = this.getErrorStatus(error);
-    return status === 403 || status === 429;
+    if (status === 429) return true;
+    if (status === 403) {
+      const msg = error instanceof Error ? error.message.toLowerCase() : '';
+      return msg.includes('rate limit') || msg.includes('abuse detection') || msg.includes('secondary rate');
+    }
+    return false;
   }
 
   private getErrorStatus(error: unknown): number | null {
-    if (error instanceof Error) {
-      const messageStatusMatch = /\b(403|429)\b/.exec(error.message);
-      if (messageStatusMatch) {
-        return Number(messageStatusMatch[0]);
-      }
-    }
-
     // Check Octokit-style error.status / error.response.status
     const errObj = error as { status?: unknown; response?: { status?: unknown } } | null;
     if (errObj && typeof errObj.status === 'number') return errObj.status;
     if (errObj?.response && typeof errObj.response.status === 'number') return errObj.response.status;
 
+    if (error instanceof Error) {
+      const messageStatusMatch = /\b(403|429)\b/.exec(error.message);
+      if (messageStatusMatch) return Number(messageStatusMatch[0]);
+    }
+
     return null;
   }
 
   private getMonitorKey(params: AwaitParams): string {
-    return `${params.owner}/${params.repo}#${params.pr}`;
+    const agentsSorted = [...params.agents].sort().join(',');
+    return `${params.owner}/${params.repo}#${params.pr}@${params.since}[${agentsSorted}]`;
   }
 
   private sleep(ms: number, signal: AbortSignal): Promise<void> {

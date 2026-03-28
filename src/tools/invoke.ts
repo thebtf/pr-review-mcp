@@ -50,6 +50,8 @@ export interface InvokeOutput {
   message: string;
   /** ISO timestamp of invocation — use as `since` parameter for pr_await_reviews */
   since: string;
+  /** Agent IDs that were actually invoked — pass to pr_await_reviews `agents` parameter */
+  invokedAgentIds: string[];
   /** Human-readable instruction for using pr_await_reviews */
   awaitHint: string;
 }
@@ -209,6 +211,7 @@ export async function prInvoke(
         ? `All agents already reviewed: ${skipped.join(', ')}. Use force=true to re-invoke.`
         : 'No agents to invoke',
       since,
+      invokedAgentIds: [],
       awaitHint: 'All agents already reviewed — no need to call pr_await_reviews.',
     };
   }
@@ -226,8 +229,9 @@ export async function prInvoke(
   return {
     ...aggregated,
     since,
+    invokedAgentIds: agentsToInvoke as string[],
     awaitHint: aggregated.invoked.length > 0
-      ? `Call pr_await_reviews with since="${since}" to wait for reviews to complete.`
+      ? `Call pr_await_reviews with since="${since}" and agents=${JSON.stringify(agentsToInvoke)} to wait for reviews.`
       : 'No agents invoked — no need to call pr_await_reviews.',
   };
 }
