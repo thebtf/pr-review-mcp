@@ -48,6 +48,12 @@ export interface InvokeOutput {
   skipped: string[];
   results: InvokeResult[];
   message: string;
+  /** ISO timestamp of invocation — use as `since` parameter for pr_await_reviews */
+  since: string;
+  /** Agent IDs that were actually invoked — pass to pr_await_reviews `agents` parameter */
+  invokedAgentIds: string[];
+  /** Human-readable instruction for using pr_await_reviews */
+  awaitHint: string;
 }
 
 // ============================================================================
@@ -151,6 +157,8 @@ export async function prInvoke(
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;
+  // Capture 1s before invocation to avoid strict > filtering missing same-second events
+  const since = new Date(Date.now() - 1000).toISOString();
 
   let agentsToInvoke: InvokableAgentId[];
   let mergedOptions = options;
@@ -202,7 +210,10 @@ export async function prInvoke(
       results: [],
       message: skipped.length > 0
         ? `All agents already reviewed: ${skipped.join(', ')}. Use force=true to re-invoke.`
-        : 'No agents to invoke'
+        : 'No agents to invoke',
+      since,
+      invokedAgentIds: [],
+      awaitHint: 'All agents already reviewed — no need to call pr_await_reviews.',
     };
   }
 
@@ -215,5 +226,13 @@ export async function prInvoke(
     mergedOptions
   );
 
-  return aggregateResults(results, skipped);
+  const aggregated = aggregateResults(results, skipped);
+  return {
+    ...aggregated,
+    since,
+    invokedAgentIds: agentsToInvoke as string[],
+    awaitHint: aggregated.invoked.length > 0
+      ? `Call pr_await_reviews with since="${since}" and agents=${JSON.stringify(agentsToInvoke)} to wait for reviews.`
+      : 'No agents invoked — no need to call pr_await_reviews.',
+  };
 }

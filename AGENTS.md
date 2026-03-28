@@ -61,7 +61,8 @@ pr-review-mcp/
 | `pr_get` | Get full comment details + AI prompt |
 | `pr_resolve` | Mark review thread as resolved |
 | `pr_changes` | Incremental updates with cursor pagination |
-| `pr_invoke` | Invoke AI agents with smart detection (skips agents that already reviewed) |
+| `pr_invoke` | Invoke AI agents with smart detection (skips agents that already reviewed). Returns `since` timestamp for `pr_await_reviews`. |
+| `pr_await_reviews` | Block until invoked review agents complete. Server-side polling with MCP progress notifications. Use after `pr_invoke`. |
 
 ---
 
