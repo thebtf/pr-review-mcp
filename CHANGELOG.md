@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-28
+
+### Added
+
+- **`pr_await_reviews` tool** — server-side blocking until all invoked AI review agents post reviews. Configurable timeout (default 10 min) and poll interval (default 30s). Progress reported via MCP logging notifications.
+- **ReviewMonitor class** (`src/monitors/review-monitor.ts`) — encapsulates poll loop, timeout handling, concurrent call deduplication, exponential backoff on GitHub rate limits, and cleanup via AbortController.
+- **`skills/review/SKILL.md`** — Claude Code plugin skill with rich frontmatter (`allowed-tools`, `argument-hint`). Single `/pr:review` command handles auto-detection, delegation, and background orchestration.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`) — build + test with coverage on Node 18, 20, 22.
+- **Test coverage** — added `@vitest/coverage-v8` and `test:coverage` script. Baseline: 51.7% statements.
+- **`fetchAgentStatusForAgents`** — shared agent status detection for specific agent subsets (used by ReviewMonitor).
+
+### Changed
+
+- **`pr_invoke` response** — now includes `since` (ISO timestamp, 1s buffer), `invokedAgentIds`, and `awaitHint` for seamless handoff to `pr_await_reviews`.
+- **Orchestrator prompt Step 5** — uses `pr_await_reviews` as primary method with `pr_poll_updates` fallback.
+- **`pr_poll_updates` description** — mentions `pr_await_reviews` as preferred alternative for agent waiting.
+- **Qodo detection** — uses `updated_at` (not just `created_at`) for persistent issue comment tracking.
+- **`fetchAgentStatus`** — now delegates to `fetchAgentStatusForAgents`, eliminating 80 lines of code duplication.
+
+### Fixed
+
+- Duplicate `pr_await_reviews` tool registration in server.ts (linter-generated).
+- Dedup key for ReviewMonitor includes `since` + sorted agents (prevents cross-call interference).
+- HTTP 403 classified as rate limit only when message contains "rate limit" / "abuse detection" / "secondary rate" (auth errors no longer masked).
+- 10 dependency vulnerabilities resolved via `npm audit fix`.
+
+## [0.2.1] - 2026-03-20
+
+### Added
+
+- **Claude Code plugin structure** — `.claude-plugin/plugin.json`, `.mcp.json`, `commands/review.md`, `commands/setup.md`.
+- **Russian README** — `README.ru.md` with full translation and language switcher.
+- Updated CHANGELOG with v0.1.5 and v0.2.0 entries.
+
+### Removed
+
+- Stale artifacts: `PAL_*.md`, `RESOURCES.md`, `test-pal-tools.js`.
+
 ## [0.2.0] - 2026-03-20
 
 ### Added
