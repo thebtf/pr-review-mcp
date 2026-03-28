@@ -34,11 +34,13 @@ import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
 import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
 import { prPollUpdates, PollInputSchema } from './tools/poll.js';
+import { prAwaitReviews, AwaitInputSchema } from './tools/await-reviews.js';
 import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
 import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
+import { ReviewMonitor } from './monitors/review-monitor.js';
 import {
   prClaimWork,
   prReportProgress,
@@ -85,6 +87,7 @@ export class PRReviewMCPServer {
   private mcpServer: McpServer;
   private githubClient: GitHubClient;
   private httpServer?: import('node:http').Server;
+  private reviewMonitor: ReviewMonitor;
 
   constructor() {
     this.mcpServer = new McpServer(
@@ -101,6 +104,7 @@ export class PRReviewMCPServer {
     );
 
     this.githubClient = new GitHubClient();
+    this.reviewMonitor = new ReviewMonitor(this.mcpServer.server);
     logger.initialize(this.mcpServer.server);
 
     this.registerTools();
@@ -263,6 +267,21 @@ export class PRReviewMCPServer {
       catch (e) { throw toMcpError(e); }
     });
 
+    this.mcpServer.registerTool('pr_await_reviews', {
+      title: 'Await Review Completion',
+      description: 'Block until all invoked AI review agents have posted their reviews, or timeout. Use after pr_invoke — pass the `since` field from its response. Progress is logged via MCP notifications.',
+      inputSchema: AwaitInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try {
+        const result = await prAwaitReviews(args, this.reviewMonitor);
+        if (result.completed) {
+          this.mcpServer.server.sendResourceUpdated({ uri: `pr://${args.owner}/${args.repo}/${args.pr}` });
+        }
+        return PRReviewMCPServer.textResult(result);
+      } catch (e) { throw toMcpError(e); }
+    });
+
     // -- Mutating tools -------------------------------------------------------
 
     this.mcpServer.registerTool('pr_resolve', {
@@ -410,6 +429,25 @@ export class PRReviewMCPServer {
     }, async (args) => {
       try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args)); }
       catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_await_reviews', {
+      title: 'Await AI Review Agent Completion',
+      description: 'Wait for specified AI agents to post review activity on a PR.',
+      inputSchema: AwaitInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async (args) => {
+      try {
+        const result = await prAwaitReviews(args, this.reviewMonitor);
+        if (result.completed) {
+          this.mcpServer.server.sendResourceUpdated({
+            uri: `pr://${args.owner}/${args.repo}/${args.pr}`,
+          });
+        }
+        return PRReviewMCPServer.textResult(result);
+      } catch (e) {
+        throw toMcpError(e);
+      }
     });
   }
 

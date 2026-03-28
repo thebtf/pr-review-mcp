@@ -194,6 +194,17 @@ Mark task 1 as \`in_progress\` immediately after creation.
 | complete | Task 4 completed |
 | error, aborted | Current task: update description with error detail |
 
+## ASYNC REVIEW WAITING
+
+When called from the main conversation context (not as a background agent):
+- After \`pr_invoke\`, use the \`since\` field from its response
+- Launch a **background Task** wrapping \`pr_await_reviews\`:
+  \`\`\`
+  Task({ prompt: "Call pr_await_reviews({ owner, repo, pr, since })", run_in_background: true })
+  \`\`\`
+- Continue with other work — you will be notified when the Task completes
+- On Task completion, read the result and proceed to Step 6 or Step 8
+
 ---
 `;
 
@@ -241,7 +252,7 @@ On error/abort, report with detail explaining why.
 ## State Machine
 
 \`\`\`
-ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
+ESCAPE_CHECK -> INVOKE_AGENTS -> AWAIT_REVIEWS
                                      |
                     +----------------+----------------+
                     |                                 |
@@ -250,7 +261,7 @@ ESCAPE_CHECK -> INVOKE_AGENTS -> POLL_WAIT
               +-----+-----+                      STOP (user)
               no          yes
               |            |
-           (wait)    unresolved > 0?
+        (server wait) unresolved > 0?
                           |
                     +-----+-----+
                     yes         no
@@ -303,21 +314,30 @@ pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:active"] }
 ### Step 4: INVOKE AGENTS
 \`\`\`
 pr_progress_update { phase: "invoke_agents" }
-pr_invoke { owner, repo, pr, agent: "all" }
+result = pr_invoke { owner, repo, pr, agent: "all" }
 \`\`\`
+- Save \`result.since\` — pass it to pr_await_reviews in Step 5
 
-### Step 5: POLL & WAIT
+### Step 5: AWAIT REVIEWS
 \`\`\`
 pr_progress_update { phase: "poll_wait" }
-pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
+pr_await_reviews { owner, repo, pr, since: <since from pr_invoke response> }
 \`\`\`
-- \`allAgentsReady: false\` → wait 30s, poll again
-- \`allAgentsReady: true\` → get summary:
+- Blocks server-side until all agents post reviews (up to 10 min timeout)
+- Progress logged automatically via MCP notifications
+- On completion or timeout → get summary:
 \`\`\`
 pr_summary { owner, repo, pr }
 \`\`\`
 - \`unresolved > 0\` → Step 6
 - \`unresolved === 0\` → Step 8
+
+**Fallback:** If pr_await_reviews is unavailable, poll manually:
+\`\`\`
+pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
+\`\`\`
+- \`allAgentsReady: false\` → wait 30s, poll again
+- \`allAgentsReady: true\` → continue
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 \`\`\`
