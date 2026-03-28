@@ -157,7 +157,8 @@ export async function prInvoke(
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;
-  const since = new Date().toISOString();
+  // Capture 1s before invocation to avoid strict > filtering missing same-second events
+  const since = new Date(Date.now() - 1000).toISOString();
 
   let agentsToInvoke: InvokableAgentId[];
   let mergedOptions = options;

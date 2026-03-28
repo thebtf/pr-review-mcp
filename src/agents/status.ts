@@ -96,7 +96,7 @@ export async function fetchAgentStatus(
     const agentIssueComments = issueComments.filter(c =>
       c.user &&
       matchesAuthorPattern(c.user.login, pattern) &&
-      (!sinceDate || new Date(c.created_at) > sinceDate)
+      (!sinceDate || new Date(c.updated_at ?? c.created_at) > sinceDate)
     );
 
     // Filter reviews by author and timestamp
@@ -113,7 +113,7 @@ export async function fetchAgentStatus(
     // Find latest timestamp from filtered activity
     let lastComment: string | undefined;
     const allDates = [
-      ...agentIssueComments.map(c => c.created_at),
+      ...agentIssueComments.map(c => c.updated_at ?? c.created_at),
       ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null && d !== undefined)
     ];
     if (allDates.length > 0) {
@@ -185,7 +185,7 @@ export async function fetchAgentStatusForAgents(
     const agentIssueComments = issueComments.filter(c =>
       c.user &&
       matchesAuthorPattern(c.user.login, pattern) &&
-      (!sinceDate || new Date(c.created_at) > sinceDate)
+      (!sinceDate || new Date(c.updated_at ?? c.created_at) > sinceDate)
     );
 
     // Filter reviews by author and timestamp
@@ -202,7 +202,7 @@ export async function fetchAgentStatusForAgents(
     // Find latest timestamp from filtered activity
     let lastComment: string | undefined;
     const allDates = [
-      ...agentIssueComments.map(c => c.created_at),
+      ...agentIssueComments.map(c => c.updated_at ?? c.created_at),
       ...agentReviews.map(r => r.submitted_at).filter((d): d is string => d !== null && d !== undefined)
     ];
     if (allDates.length > 0) {

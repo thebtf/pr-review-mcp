@@ -316,12 +316,12 @@ pr_labels { owner, repo, pr, action: "set", labels: ["ai-review:active"] }
 pr_progress_update { phase: "invoke_agents" }
 result = pr_invoke { owner, repo, pr, agent: "all" }
 \`\`\`
-- Save \`result.since\` — pass it to pr_await_reviews in Step 5
+- Save \`result.since\` and \`result.invokedAgentIds\` — pass both to pr_await_reviews in Step 5
 
 ### Step 5: AWAIT REVIEWS
 \`\`\`
 pr_progress_update { phase: "poll_wait" }
-pr_await_reviews { owner, repo, pr, since: <since from pr_invoke response> }
+pr_await_reviews { owner, repo, pr, agents: <result.invokedAgentIds>, since: <result.since> }
 \`\`\`
 - Blocks server-side until all agents post reviews (up to 10 min timeout)
 - Progress logged automatically via MCP notifications
@@ -334,7 +334,7 @@ pr_summary { owner, repo, pr }
 
 **Fallback:** If pr_await_reviews is unavailable, poll manually:
 \`\`\`
-pr_poll_updates { owner, repo, pr, include: ["comments", "agents"] }
+pr_poll_updates { owner, repo, pr, since: <result.since>, include: ["comments", "agents"] }
 \`\`\`
 - \`allAgentsReady: false\` → wait 30s, poll again
 - \`allAgentsReady: true\` → continue
