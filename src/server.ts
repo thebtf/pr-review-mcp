@@ -525,20 +525,16 @@ export class PRReviewMCPServer {
   async run(options: { mode?: 'stdio' | 'http'; port?: number } = {}): Promise<void> {
     const { mode = 'stdio', port = 3000 } = options;
 
-    // Check prerequisites — exit early if not met
+    // Check prerequisites — warn if no token in env (session-aware mode gets tokens from _meta.muxEnv)
     try {
       this.githubClient.checkPrerequisites();
-      console.error('GitHub token configured');
-    } catch (e) {
-      if (e instanceof StructuredError) {
-        console.error(`${e.message}`);
-        if (e.userAction) {
-          console.error(`   Action: ${e.userAction}`);
-        }
-      } else {
-        console.error(`Prerequisite check failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      process.exit(1);
+      console.error('GitHub token configured (process.env)');
+    } catch {
+      console.error(
+        'GITHUB_PERSONAL_ACCESS_TOKEN not set in process.env. ' +
+        'Session-aware mode: tokens will be provided per-session via mcp-mux _meta.muxEnv. ' +
+        'Stdio mode without mcp-mux will fail on first tool call.'
+      );
     }
 
     if (mode === 'http') {
