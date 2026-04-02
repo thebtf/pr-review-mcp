@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import type { graphql as GraphqlFn } from '@octokit/graphql';
 import { getGraphQL } from './octokit.js';
 import { GraphqlResponseError } from '@octokit/graphql';
 import type { GraphQLVariables, GraphQLResponse, GraphQLError } from './types.js';
@@ -137,9 +138,20 @@ class CircuitBreaker {
 
 export class GitHubClient {
   private circuitBreaker = new CircuitBreaker();
+  private readonly graphqlFn: typeof GraphqlFn | undefined;
 
   /**
-   * Check prerequisites (GITHUB_PERSONAL_ACCESS_TOKEN set)
+   * @param graphqlFn Optional injected GraphQL client for per-session usage.
+   *   When omitted, falls back to the singleton from getGraphQL().
+   */
+  constructor(graphqlFn?: typeof GraphqlFn) {
+    this.graphqlFn = graphqlFn;
+  }
+
+  /**
+   * Check prerequisites (GITHUB_PERSONAL_ACCESS_TOKEN set).
+   * In session-aware mode, token comes from _meta.muxEnv per request,
+   * so this check only applies to stdio/direct mode.
    */
   checkPrerequisites(): void {
     if (!process.env.GITHUB_PERSONAL_ACCESS_TOKEN) {
@@ -167,7 +179,7 @@ export class GitHubClient {
    */
   private async executeGraphQL<T>(query: string, variables: GraphQLVariables): Promise<T> {
     try {
-      const graphqlClient = getGraphQL();
+      const graphqlClient = this.graphqlFn ?? getGraphQL();
       const response = await graphqlClient<T>(query, variables);
       return response;
     } catch (e) {
