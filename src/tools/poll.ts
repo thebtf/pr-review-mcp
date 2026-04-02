@@ -90,12 +90,13 @@ async function fetchCommitsSince(
   owner: string,
   repo: string,
   pr: number,
-  since: string | null
+  since: string | null,
+  octokit?: import('@octokit/rest').Octokit
 ): Promise<CommitInfo[]> {
   try {
-    const octokit = getOctokit();
-    const commits = await octokit.paginate(
-      octokit.pulls.listCommits,
+    const ok = octokit ?? getOctokit();
+    const commits = await ok.paginate(
+      ok.pulls.listCommits,
       { owner, repo, pull_number: pr, per_page: 100 }
     );
 
@@ -128,13 +129,14 @@ async function fetchCommitsSince(
 async function fetchCheckStatus(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: import('@octokit/rest').Octokit
 ): Promise<PollOutput['updates']['checkStatus']> {
   try {
-    const octokit = getOctokit();
+    const ok = octokit ?? getOctokit();
 
     // Get PR head SHA
-    const { data: prData } = await octokit.pulls.get({
+    const { data: prData } = await ok.pulls.get({
       owner,
       repo,
       pull_number: pr
@@ -143,7 +145,7 @@ async function fetchCheckStatus(
     const headSha = prData.head.sha;
 
     // Get combined status
-    const { data: status } = await octokit.repos.getCombinedStatusForRef({
+    const { data: status } = await ok.repos.getCombinedStatusForRef({
       owner,
       repo,
       ref: headSha
@@ -197,7 +199,7 @@ async function fetchResolvedThreadIds(
 export async function prPollUpdates(
   input: PollInput,
   client: GitHubClient,
-  _octokit?: import('@octokit/rest').Octokit,
+  sessionOctokit?: import('@octokit/rest').Octokit,
 ): Promise<PollOutput> {
   const validated = PollInputSchema.parse(input);
   const { owner, repo, pr, since, include, compact } = validated;
@@ -229,15 +231,15 @@ export async function prPollUpdates(
   // Parallel fetch of other update types
   const [commits, checkStatus, agentsStatus] = await Promise.all([
     includeTypes.includes('commits')
-      ? fetchCommitsSince(owner, repo, pr, since || null)
+      ? fetchCommitsSince(owner, repo, pr, since || null, sessionOctokit)
       : Promise.resolve([]),
 
     includeTypes.includes('status')
-      ? fetchCheckStatus(owner, repo, pr)
+      ? fetchCheckStatus(owner, repo, pr, sessionOctokit)
       : Promise.resolve(null),
 
     includeTypes.includes('agents')
-      ? fetchAgentStatus(owner, repo, pr, since || null)
+      ? fetchAgentStatus(owner, repo, pr, since || null, sessionOctokit)
       : Promise.resolve(null)
   ]);
 

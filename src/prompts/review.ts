@@ -15,6 +15,7 @@ import { GitHubClient } from '../github/client.js';
 import { prSummary } from '../tools/summary.js';
 import { prListPRs, type ListPRsOutput } from '../tools/list-prs.js';
 import { prGetWorkStatus } from '../tools/coordination.js';
+import { CoordinationStateManager } from '../coordination/state.js';
 import { getEnvConfig, type InvokableAgentId, type ReviewMode } from '../agents/registry.js';
 import { logger } from '../logging.js';
 import { detectCurrentBranch, detectGitRepo, isDefaultBranch } from '../git/detect.js';
@@ -647,7 +648,7 @@ async function buildContext(
         try {
           const [summary, workStatus] = await Promise.all([
             prSummary({ owner, repo, pr: branchPR.number }, client),
-            prGetWorkStatus({}, client)
+            prGetWorkStatus({}, client, new CoordinationStateManager())
           ]);
 
           return {
@@ -701,7 +702,7 @@ async function buildContext(
     try {
       const [summary, workStatus] = await Promise.all([
         prSummary({ owner, repo, pr: normalized.pr }, client),
-        prGetWorkStatus({}, client)
+        prGetWorkStatus({}, client, new CoordinationStateManager())
       ]);
 
       return {

@@ -49,11 +49,11 @@ export interface MergeOutput {
 // Main Function
 // ============================================================================
 
-export async function prMerge(input: MergeInput, _octokit?: import('@octokit/rest').Octokit): Promise<MergeOutput> {
+export async function prMerge(input: MergeInput, sessionOctokit?: import('@octokit/rest').Octokit): Promise<MergeOutput> {
   const validated = MergeInputSchema.parse(input);
   const { owner, repo, pr, method, commit_title, commit_message, delete_branch } = validated;
 
-  const octokit = getOctokit();
+  const octokit = sessionOctokit ?? getOctokit();
 
   // First, get PR info to check state and get branch name
   let headRef: string;

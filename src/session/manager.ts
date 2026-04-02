@@ -84,7 +84,10 @@ export class MuxSessionManager {
 
   /**
    * Resolve GitHub token for a session.
-   * Priority: muxEnv.GITHUB_PERSONAL_ACCESS_TOKEN > process.env.GITHUB_PERSONAL_ACCESS_TOKEN
+   * Priority: muxEnv.GITHUB_PERSONAL_ACCESS_TOKEN > process.env (default session only).
+   * For mux sessions (sessionId !== "default"), the token MUST come from muxEnv —
+   * falling back to the server's process.env PAT would be a security issue
+   * (server PAT used for arbitrary mux sessions).
    */
   private resolveToken(meta: MuxMeta): string {
     const envToken = meta.env.GITHUB_PERSONAL_ACCESS_TOKEN;
@@ -92,14 +95,20 @@ export class MuxSessionManager {
       return envToken;
     }
 
-    const processToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
-    if (processToken && processToken.length > 0) {
-      return processToken;
+    // Only allow process.env fallback for the default session (stdio mode)
+    if (meta.sessionId === DEFAULT_SESSION_ID) {
+      const processToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+      if (processToken && processToken.length > 0) {
+        return processToken;
+      }
     }
 
     throw new Error(
-      'No GitHub token available. ' +
-      'Set GITHUB_PERSONAL_ACCESS_TOKEN in .mcp.json env or as an environment variable.'
+      meta.sessionId === DEFAULT_SESSION_ID
+        ? 'No GitHub token available. ' +
+          'Set GITHUB_PERSONAL_ACCESS_TOKEN in .mcp.json env or as an environment variable.'
+        : `No GitHub token available for session "${meta.sessionId}". ` +
+          'Mux sessions must provide GITHUB_PERSONAL_ACCESS_TOKEN via muxEnv.'
     );
   }
 

@@ -104,13 +104,14 @@ async function initializeRun(
   owner: string,
   repo: string,
   pr: number,
-  coordination: CoordinationStateManager
+  coordination: CoordinationStateManager,
+  octokit?: import('@octokit/rest').Octokit
 ): Promise<string> {
-  const octokit = getOctokit();
+  const ok = octokit ?? getOctokit();
 
   // 1. Fetch PR data and threads in parallel
   const [prResponse, threadsResponse] = await Promise.all([
-    octokit.pulls.get({ owner, repo, pull_number: pr }),
+    ok.pulls.get({ owner, repo, pull_number: pr }),
     fetchAllThreads(client, owner, repo, pr, {
       filter: { resolved: false },
       maxItems: 500 // Reasonable limit
@@ -158,7 +159,8 @@ async function refreshPartitions(
 export async function prClaimWork(
   input: ClaimWorkInput,
   client: GitHubClient,
-  coordination: CoordinationStateManager
+  coordination: CoordinationStateManager,
+  octokit?: import('@octokit/rest').Octokit
 ) {
   const { agent_id, pr_info, force } = input;
 
@@ -220,7 +222,7 @@ export async function prClaimWork(
   }
 
   if (needsInit) {
-    await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr, coordination);
+    await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr, coordination, octokit);
   }
 
   let partition = coordination.claimPartition(agent_id);
@@ -282,7 +284,7 @@ export async function prReportProgress(
 export async function prGetWorkStatus(
   input: GetWorkStatusInput,
   client: GitHubClient,
-  coordination: CoordinationStateManager = new CoordinationStateManager()
+  coordination: CoordinationStateManager
 ) {
   // We currently ignore run_id in input as we only support singleton active run
   const { active, ...status } = coordination.getStatus();
