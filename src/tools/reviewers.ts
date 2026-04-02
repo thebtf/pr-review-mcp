@@ -41,7 +41,7 @@ export interface ReviewersOutput {
 // Main Function
 // ============================================================================
 
-export async function prReviewers(input: ReviewersInput): Promise<ReviewersOutput> {
+export async function prReviewers(input: ReviewersInput, _octokit?: import('@octokit/rest').Octokit): Promise<ReviewersOutput> {
   const validated = ReviewersInputSchema.parse(input);
   const { owner, repo, pr, action, reviewers, team_reviewers } = validated;
 

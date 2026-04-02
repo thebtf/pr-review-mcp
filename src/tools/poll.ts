@@ -196,7 +196,8 @@ async function fetchResolvedThreadIds(
 
 export async function prPollUpdates(
   input: PollInput,
-  client: GitHubClient
+  client: GitHubClient,
+  _octokit?: import('@octokit/rest').Octokit,
 ): Promise<PollOutput> {
   const validated = PollInputSchema.parse(input);
   const { owner, repo, pr, since, include, compact } = validated;

@@ -34,7 +34,7 @@ import { prResolveWithContext, ResolveInputSchema } from './tools/resolve.js';
 import { prChanges, ChangesInputSchema } from './tools/changes.js';
 import { prInvoke, InvokeInputSchema } from './tools/invoke.js';
 import { prPollUpdates, PollInputSchema } from './tools/poll.js';
-import { prAwaitReviews, AwaitInputSchema } from './tools/await-reviews.js';
+import { prAwaitReviews, AwaitInputSchema, type AwaitInput } from './tools/await-reviews.js';
 import { prLabels, LabelsInputSchema } from './tools/labels.js';
 import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
@@ -72,6 +72,9 @@ import {
   type SetupPromptArgs,
 } from './prompts/setup.js';
 
+// Session
+import { MuxSessionManager } from './session/manager.js';
+
 // Resources
 import { readPRResource } from './resources/pr.js';
 
@@ -88,6 +91,7 @@ export class PRReviewMCPServer {
   private githubClient: GitHubClient;
   private httpServer?: import('node:http').Server;
   private reviewMonitor: ReviewMonitor;
+  private sessionManager: MuxSessionManager;
 
   constructor() {
     this.mcpServer = new McpServer(
@@ -98,13 +102,14 @@ export class PRReviewMCPServer {
           prompts: {},
           logging: {},
           resources: {},
-          experimental: { 'x-mux': { sharing: 'shared', stateless: false } },
+          experimental: { 'x-mux': { sharing: 'session-aware' } },
         },
       },
     );
 
     this.githubClient = new GitHubClient();
     this.reviewMonitor = new ReviewMonitor(this.mcpServer.server);
+    this.sessionManager = new MuxSessionManager();
     logger.initialize(this.mcpServer.server);
 
     this.registerTools();
@@ -210,8 +215,9 @@ export class PRReviewMCPServer {
       inputSchema: SummaryInputSchema,
       outputSchema: SummaryOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.structuredResult(await prSummary(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(await prSummary(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -220,8 +226,9 @@ export class PRReviewMCPServer {
       description: 'List all pull requests in a repository with stats (review threads, comments, changes)',
       inputSchema: ListPRsInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prListPRs(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prListPRs(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -231,8 +238,9 @@ export class PRReviewMCPServer {
       inputSchema: ListInputSchema,
       outputSchema: ListOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.structuredResult(await prList(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(await prList(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -242,8 +250,9 @@ export class PRReviewMCPServer {
       inputSchema: GetInputSchema,
       outputSchema: GetOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.structuredResult(await prGet(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(await prGet(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -252,8 +261,9 @@ export class PRReviewMCPServer {
       description: 'Get comments since cursor for incremental updates',
       inputSchema: ChangesInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prChanges(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prChanges(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -262,8 +272,9 @@ export class PRReviewMCPServer {
       description: 'Poll for new review updates since a timestamp (comments, commits, status). For waiting on agent reviews, prefer pr_await_reviews which blocks server-side.',
       inputSchema: PollInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prPollUpdates(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prPollUpdates(args, ctx.githubClient, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -272,9 +283,10 @@ export class PRReviewMCPServer {
       description: 'Block until all invoked AI review agents have posted their reviews, or timeout. Use after pr_invoke — pass the `since` field from its response. Progress is logged via MCP notifications.',
       inputSchema: AwaitInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
       try {
-        const result = await prAwaitReviews(args, this.reviewMonitor);
+        const result = await prAwaitReviews({ ...args, octokit: ctx.octokit } as AwaitInput, this.reviewMonitor);
         if (result.completed) {
           this.mcpServer.server.sendResourceUpdated({ uri: `pr://${args.owner}/${args.repo}/${args.pr}` });
         }
@@ -289,8 +301,9 @@ export class PRReviewMCPServer {
       description: 'Mark a review thread as resolved',
       inputSchema: ResolveInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prResolveWithContext(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prResolveWithContext(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -299,8 +312,9 @@ export class PRReviewMCPServer {
       description: 'Invoke AI code review agents on a PR. When agent="all", agents are resolved from: (1) .github/pr-review.json in repo, (2) PR_REVIEW_AGENTS env var, (3) default (coderabbit only). Use pr:setup prompt to configure per-repo agents. Smart detection skips agents that already reviewed (use force to override).',
       inputSchema: InvokeInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prInvoke(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prInvoke(args, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -309,8 +323,9 @@ export class PRReviewMCPServer {
       description: 'Get, add, remove, or set labels on a PR',
       inputSchema: LabelsInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prLabels(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prLabels(args, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -319,8 +334,9 @@ export class PRReviewMCPServer {
       description: 'Request or remove reviewers on a PR',
       inputSchema: ReviewersInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prReviewers(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prReviewers(args, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -329,8 +345,9 @@ export class PRReviewMCPServer {
       description: 'Create a new pull request from an existing branch',
       inputSchema: CreateInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prCreate(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prCreate(args, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -340,6 +357,7 @@ export class PRReviewMCPServer {
       inputSchema: MergeInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
       try {
         // Try elicitation first, fall back to confirm param
         if (!args.confirm) {
@@ -352,7 +370,7 @@ export class PRReviewMCPServer {
               'Confirmation required: set confirm=true or approve the elicitation prompt', false);
           }
         }
-        return PRReviewMCPServer.textResult(await prMerge({ ...args, confirm: true }));
+        return PRReviewMCPServer.textResult(await prMerge({ ...args, confirm: true }, ctx.octokit));
       } catch (e) { throw toMcpError(e); }
     });
 
@@ -363,8 +381,9 @@ export class PRReviewMCPServer {
       description: 'Claim file partition for parallel PR review processing',
       inputSchema: ClaimWorkSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prClaimWork(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prClaimWork(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -384,8 +403,9 @@ export class PRReviewMCPServer {
       inputSchema: GetWorkStatusSchema,
       outputSchema: WorkStatusOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, client)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, ctx.githubClient)); }
       catch (e) { throw toMcpError(e); }
     });
 

@@ -153,7 +153,8 @@ async function getConfiguredAgents(
  * @returns Invocation results
  */
 export async function prInvoke(
-  input: InvokeInput
+  input: InvokeInput,
+  _octokit?: import('@octokit/rest').Octokit,
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;

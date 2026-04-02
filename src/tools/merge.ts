@@ -49,7 +49,7 @@ export interface MergeOutput {
 // Main Function
 // ============================================================================
 
-export async function prMerge(input: MergeInput): Promise<MergeOutput> {
+export async function prMerge(input: MergeInput, _octokit?: import('@octokit/rest').Octokit): Promise<MergeOutput> {
   const validated = MergeInputSchema.parse(input);
   const { owner, repo, pr, method, commit_title, commit_message, delete_branch } = validated;
 

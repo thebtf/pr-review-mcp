@@ -54,7 +54,7 @@ function extractLabelNames(labels: Array<string | { name?: string }>): string[] 
 // Main Function
 // ============================================================================
 
-export async function prLabels(input: LabelsInput): Promise<LabelsOutput> {
+export async function prLabels(input: LabelsInput, _octokit?: import('@octokit/rest').Octokit): Promise<LabelsOutput> {
   const validated = LabelsInputSchema.parse(input);
   const { owner, repo, pr, action, labels } = validated;
 
