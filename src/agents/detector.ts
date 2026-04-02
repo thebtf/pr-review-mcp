@@ -7,6 +7,7 @@ import { GitHubClient } from '../github/client.js';
 import { QUERIES } from '../github/queries.js';
 import { ListReviewsData } from '../github/types.js';
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 import { fetchQodoReview } from '../adapters/qodo.js';
 import { INVOKABLE_AGENTS, InvokableAgentId, getInvokableAgentIds } from './registry.js';
 import { logger } from '../logging.js';
@@ -74,20 +75,21 @@ export async function detectReviewedAgents(
   client: GitHubClient,
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<DetectionResult> {
   const reviewed = new Set<InvokableAgentId>();
   const pending = new Set<InvokableAgentId>();
   const details: AgentDetectionDetail[] = [];
 
   try {
-    const octokit = getOctokit();
+    const ok = octokit ?? getOctokit();
     
     // Fetch reviews, Qodo, requested reviewers, and check runs in parallel
     const [reviewsData, qodoReview, prData] = await Promise.all([
       client.graphql<ListReviewsData>(QUERIES.listReviews, { owner, repo, pr }),
-      fetchQodoReview(owner, repo, pr),
-      octokit.pulls.get({ owner, repo, pull_number: pr })
+      fetchQodoReview(owner, repo, pr, octokit),
+      ok.pulls.get({ owner, repo, pull_number: pr })
     ]);
 
     const headSha = prData.data.head.sha;
@@ -95,7 +97,7 @@ export async function detectReviewedAgents(
     // Fetch check runs for the head SHA (agents like CodeRabbit run as GitHub Checks)
     let checkRuns: { name: string; status: string; conclusion: string | null; app?: { slug?: string } }[] = [];
     try {
-      const allCheckRuns = await octokit.paginate(octokit.checks.listForRef, {
+      const allCheckRuns = await ok.paginate(ok.checks.listForRef, {
         owner,
         repo,
         ref: headSha,

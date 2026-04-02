@@ -3,6 +3,7 @@
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { Octokit } from '@octokit/rest';
 import { fetchAgentStatusForAgents, type AgentStatus } from '../agents/status.js';
 import type { InvokableAgentId } from '../agents/registry.js';
 
@@ -20,6 +21,8 @@ export interface AwaitParams {
   since: string;
   timeoutMs: number;
   pollIntervalMs: number;
+  /** Optional per-session Octokit client for mcp-mux session-aware mode */
+  octokit?: Octokit;
 }
 
 export interface AwaitResult {
@@ -97,7 +100,7 @@ export class ReviewMonitor {
       }
 
       try {
-        status = await fetchAgentStatusForAgents(owner, repo, pr, agents, since);
+        status = await fetchAgentStatusForAgents(owner, repo, pr, agents, since, params.octokit);
         pollIntervalMs = params.pollIntervalMs;
         rateLimitRetries = 0;
       } catch (error: unknown) {

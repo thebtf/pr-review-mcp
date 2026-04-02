@@ -1,4 +1,5 @@
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 import { getDefaultAgents, INVOKABLE_AGENTS, type InvokableAgentId } from './registry.js';
 
 export interface AgentStatus {
@@ -50,9 +51,10 @@ export async function fetchAgentStatus(
   owner: string,
   repo: string,
   pr: number,
-  since: string | null
+  since: string | null,
+  octokit?: Octokit
 ): Promise<AgentsStatus> {
-  return fetchAgentStatusForAgents(owner, repo, pr, getDefaultAgents(), since);
+  return fetchAgentStatusForAgents(owner, repo, pr, getDefaultAgents(), since, octokit);
 }
 
 export async function fetchAgentStatusForAgents(
@@ -60,15 +62,16 @@ export async function fetchAgentStatusForAgents(
   repo: string,
   pr: number,
   agents: InvokableAgentId[],
-  since: string | null
+  since: string | null,
+  octokit?: Octokit
 ): Promise<AgentsStatus> {
-  const octokit = getOctokit();
+  const ok = octokit ?? getOctokit();
   const sinceDate = since ? new Date(since) : null;
 
   // Get issue comments and reviews to check for agent activity
   const [issueComments, reviews] = await Promise.all([
     paginateWithLimit(
-      octokit.paginate.iterator(octokit.issues.listComments, {
+      ok.paginate.iterator(ok.issues.listComments, {
         owner,
         repo,
         issue_number: pr,
@@ -77,7 +80,7 @@ export async function fetchAgentStatusForAgents(
       200
     ),
     paginateWithLimit(
-      octokit.paginate.iterator(octokit.pulls.listReviews, {
+      ok.paginate.iterator(ok.pulls.listReviews, {
         owner,
         repo,
         pull_number: pr,

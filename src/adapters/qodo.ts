@@ -7,6 +7,7 @@
 
 import { createHash } from 'crypto';
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 
 export interface QodoComment {
   id: string;
@@ -42,14 +43,15 @@ const MARKER = 'PR Reviewer Guide';
 async function fetchPRFilesMap(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<Map<string, string>> {
   const fileMap = new Map<string, string>();
 
   try {
-    const octokit = getOctokit();
-    const files = await octokit.paginate(
-      octokit.pulls.listFiles,
+    const ok = octokit ?? getOctokit();
+    const files = await ok.paginate(
+      ok.pulls.listFiles,
       { owner, repo, pull_number: pr, per_page: 100 }
     );
 
@@ -82,12 +84,13 @@ function resolveFileFromUrl(url: string, fileMap: Map<string, string>): string {
 export async function fetchQodoReview(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<QodoReview | null> {
   // Fetch Qodo comment and PR files in parallel
   const [qodoResult, fileMap] = await Promise.all([
-    fetchQodoComment(owner, repo, pr),
-    fetchPRFilesMap(owner, repo, pr)
+    fetchQodoComment(owner, repo, pr, octokit),
+    fetchPRFilesMap(owner, repo, pr, octokit)
   ]);
 
   if (!qodoResult) {
@@ -103,12 +106,13 @@ export async function fetchQodoReview(
 async function fetchQodoComment(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<{ id: number; html_url: string; updated_at: string; body: string } | null> {
   try {
-    const octokit = getOctokit();
-    const comments = await octokit.paginate(
-      octokit.issues.listComments,
+    const ok = octokit ?? getOctokit();
+    const comments = await ok.paginate(
+      ok.issues.listComments,
       { owner, repo, issue_number: pr, per_page: 100 }
     );
 
