@@ -28,6 +28,11 @@ pr-review-mcp/
 │   ├── server.ts              # MCP server entry point
 │   ├── logging.ts             # MCP logging utility
 │   ├── index.ts               # CLI entry point
+│   ├── session/
+│   │   ├── types.ts           # MuxMeta, MuxSessionContext interfaces
+│   │   ├── meta.ts            # extractMuxMeta() from extra._meta
+│   │   ├── context.ts         # createSessionContext() factory
+│   │   └── manager.ts         # MuxSessionManager (per-session state)
 │   ├── github/
 │   │   ├── client.ts          # GitHub GraphQL/REST client
 │   │   ├── octokit.ts         # Octokit instance management
@@ -173,6 +178,23 @@ Greptile posts an overview issue comment + inline review comments.
   "awaitHint": "Call pr_await_reviews with since=... and agents=[...] to wait for reviews."
 }
 ```
+
+---
+
+## SESSION-AWARE MODE (mcp-mux)
+
+The server declares `x-mux: { sharing: "session-aware" }` for mcp-mux v0.6.0+.
+
+**How it works:**
+- mcp-mux injects `_meta.muxSessionId` + `_meta.muxEnv` into every JSON-RPC request
+- `MuxSessionManager` creates per-session contexts (Octokit, GitHubClient, CoordinationState)
+- Token resolved from: `muxEnv.GITHUB_PERSONAL_ACCESS_TOKEN` → `process.env` fallback
+- Stale sessions cleaned up after 30 minutes of inactivity
+
+**Per-session state:** Octokit, GraphQL client, GitHubClient (with CircuitBreaker), CoordinationStateManager
+**Shared state:** ReviewMonitor (keyed by PR), MCP logger
+
+**Stdio fallback:** Without mcp-mux, uses `"default"` session with `process.env` token.
 
 ---
 

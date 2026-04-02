@@ -7,6 +7,7 @@
  */
 
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 import { StructuredError } from '../github/client.js';
 import { SEVERITY_ORDER } from '../extractors/severity.js';
 import type { QodoReview, QodoComment } from './qodo.js';
@@ -119,12 +120,13 @@ function generateTrackerBody(
 export async function fetchTrackerComment(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<{ id: number; body: string; url: string } | null> {
   try {
-    const octokit = getOctokit();
-    const comments = await octokit.paginate(
-      octokit.issues.listComments,
+    const ok = octokit ?? getOctokit();
+    const comments = await ok.paginate(
+      ok.issues.listComments,
       { owner, repo, issue_number: pr, per_page: 100 }
     );
 
@@ -170,11 +172,12 @@ export async function getTrackerResolvedMap(
 export async function deleteTrackerComment(
   owner: string,
   repo: string,
-  commentId: number
+  commentId: number,
+  octokit?: Octokit
 ): Promise<void> {
   try {
-    const octokit = getOctokit();
-    await octokit.issues.deleteComment({
+    const ok = octokit ?? getOctokit();
+    await ok.issues.deleteComment({
       owner,
       repo,
       comment_id: commentId
@@ -190,12 +193,13 @@ export async function deleteTrackerComment(
 export async function cleanupDuplicateTrackers(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<{ kept: number | null; deleted: number[] }> {
   try {
-    const octokit = getOctokit();
-    const comments = await octokit.paginate(
-      octokit.issues.listComments,
+    const ok = octokit ?? getOctokit();
+    const comments = await ok.paginate(
+      ok.issues.listComments,
       { owner, repo, issue_number: pr, per_page: 100 }
     );
 
@@ -219,7 +223,7 @@ export async function cleanupDuplicateTrackers(
 
     // Delete duplicates
     for (const id of toDelete) {
-      await deleteTrackerComment(owner, repo, id);
+      await deleteTrackerComment(owner, repo, id, octokit);
     }
 
     return { kept, deleted: toDelete };
@@ -235,11 +239,12 @@ export async function createTrackerComment(
   owner: string,
   repo: string,
   pr: number,
-  body: string
+  body: string,
+  octokit?: Octokit
 ): Promise<{ id: number; url: string }> {
   try {
-    const octokit = getOctokit();
-    const { data } = await octokit.issues.createComment({
+    const ok = octokit ?? getOctokit();
+    const { data } = await ok.issues.createComment({
       owner,
       repo,
       issue_number: pr,
@@ -266,11 +271,12 @@ export async function updateTrackerComment(
   owner: string,
   repo: string,
   commentId: number,
-  body: string
+  body: string,
+  octokit?: Octokit
 ): Promise<void> {
   try {
-    const octokit = getOctokit();
-    await octokit.issues.updateComment({
+    const ok = octokit ?? getOctokit();
+    await ok.issues.updateComment({
       owner,
       repo,
       comment_id: commentId,

@@ -8,7 +8,7 @@ import { QUERIES } from '../github/queries.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview } from '../adapters/qodo.js';
 import { toggleQodoIssue } from '../adapters/qodo-tracker.js';
-import { stateManager } from '../coordination/state.js';
+import type { CoordinationStateManager } from '../coordination/state.js';
 import { addResolvedReaction, addReactionToNode } from '../github/state-comment.js';
 import { logger } from '../logging.js';
 import type { ResolveInput, ResolveOutput, ResolveThreadData } from '../github/types.js';
@@ -26,7 +26,8 @@ export const ResolveInputSchema = z.object({
  */
 export async function prResolveWithContext(
   input: ResolveInput & { pr: number },
-  client: GitHubClient
+  client: GitHubClient,
+  coordination?: CoordinationStateManager
 ): Promise<ResolveOutput> {
   const { owner, repo, pr } = input;
   let { threadId } = input;
@@ -37,9 +38,13 @@ export async function prResolveWithContext(
   }
 
   // Check if this is a child issue of a multi-issue comment
-  const parentId = await stateManager.getParentIdForChild(threadId, { owner, repo, pr });
+  const parentId = coordination
+    ? await coordination.getParentIdForChild(threadId, { owner, repo, pr })
+    : null;
   if (parentId) {
-    await stateManager.markChildResolved(threadId, { owner, repo, pr });
+    if (coordination) {
+      await coordination.markChildResolved(threadId, { owner, repo, pr });
+    }
 
     // Try to add visual indicator reaction to parent comment
     try {
@@ -69,7 +74,9 @@ export async function prResolveWithContext(
       logger.debug('[resolve] Failed to add reaction to parent (optional)', { parentId, error: err });
     }
 
-    const allResolved = await stateManager.areAllChildrenResolved(parentId, { owner, repo, pr });
+    const allResolved = coordination
+      ? await coordination.areAllChildrenResolved(parentId, { owner, repo, pr })
+      : true;
     if (!allResolved) {
       return {
         success: true,
@@ -87,7 +94,9 @@ export async function prResolveWithContext(
 
   // Handle synthetic CodeRabbit comments (nitpicks and outside-diff)
   if (threadId.startsWith('coderabbit-nitpick-') || threadId.startsWith('coderabbit-outside-diff-')) {
-    await stateManager.markNitpickResolved(threadId, 'agent', { owner, repo, pr });
+    if (coordination) {
+      await coordination.markNitpickResolved(threadId, 'agent', { owner, repo, pr });
+    }
     return { success: true, synthetic: true, message: 'Synthetic comment marked as resolved internally' };
   }
 

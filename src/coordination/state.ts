@@ -39,7 +39,7 @@ import type {
  * 3. reportProgress() - Agents report completion with strict ownership validation
  * 4. Auto-completion when all partitions are done/failed
  */
-class CoordinationStateManager {
+export class CoordinationStateManager {
   private currentRun: CoordinationState | null = null;
   private readonly STALE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
   private static readonly DEFAULT_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
@@ -610,4 +610,3 @@ class CoordinationStateManager {
   }
 }
 
-export const stateManager = new CoordinationStateManager();

@@ -75,11 +75,12 @@ interface RepoConfig {
 async function getFileContent(
   owner: string,
   repo: string,
-  path: string
+  path: string,
+  octokit?: import('@octokit/rest').Octokit
 ): Promise<string | null> {
   try {
-    const octokit = getOctokit();
-    const { data } = await octokit.repos.getContent({
+    const ok = octokit ?? getOctokit();
+    const { data } = await ok.repos.getContent({
       owner,
       repo,
       path
@@ -106,10 +107,11 @@ async function getFileContent(
  */
 async function getConfiguredAgents(
   owner: string,
-  repo: string
+  repo: string,
+  octokit?: import('@octokit/rest').Octokit
 ): Promise<{ agents: InvokableAgentId[]; defaults?: InvokeOptions }> {
   try {
-    const content = await getFileContent(owner, repo, '.github/pr-review.json');
+    const content = await getFileContent(owner, repo, '.github/pr-review.json', octokit);
 
     if (!content) {
       return { agents: getDefaultAgents() };
@@ -153,7 +155,8 @@ async function getConfiguredAgents(
  * @returns Invocation results
  */
 export async function prInvoke(
-  input: InvokeInput
+  input: InvokeInput,
+  sessionOctokit?: import('@octokit/rest').Octokit,
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;
@@ -165,7 +168,7 @@ export async function prInvoke(
 
   if (agent === 'all') {
     // Get agents from repo config
-    const config = await getConfiguredAgents(owner, repo);
+    const config = await getConfiguredAgents(owner, repo, sessionOctokit);
     agentsToInvoke = config.agents;
 
     // Merge options with defaults from config
@@ -182,7 +185,7 @@ export async function prInvoke(
 
   if (!force) {
     const client = new GitHubClient();
-    const detection = await detectReviewedAgents(client, owner, repo, pr);
+    const detection = await detectReviewedAgents(client, owner, repo, pr, sessionOctokit);
     
     const originalCount = agentsToInvoke.length;
     agentsToInvoke = agentsToInvoke.filter(agentId => {
@@ -223,7 +226,8 @@ export async function prInvoke(
     repo,
     pr,
     agentsToInvoke,
-    mergedOptions
+    mergedOptions,
+    sessionOctokit
   );
 
   const aggregated = aggregateResults(results, skipped);

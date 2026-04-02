@@ -10,6 +10,7 @@
  */
 
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 import {
   INVOKABLE_AGENTS,
   getEnvConfig
@@ -41,11 +42,12 @@ interface RepoConfig {
 
 async function readRepoConfig(
   owner: string,
-  repo: string
+  repo: string,
+  octokit?: Octokit
 ): Promise<{ exists: boolean; config?: RepoConfig; error?: string }> {
   try {
-    const octokit = getOctokit();
-    const { data } = await octokit.repos.getContent({
+    const ok = octokit ?? getOctokit();
+    const { data } = await ok.repos.getContent({
       owner,
       repo,
       path: '.github/pr-review.json'

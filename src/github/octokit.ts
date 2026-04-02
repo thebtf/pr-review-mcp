@@ -117,6 +117,52 @@ export type { GraphQlQueryResponseData };
 export type OctokitClient = Octokit;
 
 // ============================================================================
+// Per-Session Factories (mcp-mux session-aware mode)
+// ============================================================================
+
+/**
+ * Create a new Octokit REST client for a specific token.
+ * NOT cached — caller (MuxSessionManager) is responsible for caching per session.
+ */
+export function createOctokitForToken(token: string): Octokit {
+  return new OctokitWithPlugins({
+    auth: token,
+    throttle: {
+      onRateLimit: (retryAfter: number, options: { method: string; url: string }, _octokit, retryCount: number) => {
+        logger.warning(
+          `[octokit] Rate limit hit for ${options.method} ${options.url}, ` +
+          `retrying after ${retryAfter}s (attempt ${retryCount + 1})`
+        );
+        return retryCount < 3;
+      },
+      onSecondaryRateLimit: (retryAfter: number, options: { method: string; url: string }, _octokit, retryCount: number) => {
+        logger.warning(
+          `[octokit] Secondary rate limit hit for ${options.method} ${options.url}, ` +
+          `retrying after ${retryAfter}s (attempt ${retryCount + 1})`
+        );
+        return retryCount < 2;
+      }
+    },
+    retry: {
+      doNotRetry: ['429'],
+      retries: 3
+    }
+  });
+}
+
+/**
+ * Create a new GraphQL client for a specific token.
+ * NOT cached — caller (MuxSessionManager) is responsible for caching per session.
+ */
+export function createGraphQLForToken(token: string): typeof graphql {
+  return graphql.defaults({
+    headers: {
+      authorization: `token ${token}`
+    }
+  });
+}
+
+// ============================================================================
 // Reset (for testing)
 // ============================================================================
 

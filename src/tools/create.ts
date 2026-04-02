@@ -43,11 +43,11 @@ export interface CreateOutput {
 // Main Function
 // ============================================================================
 
-export async function prCreate(input: CreateInput): Promise<CreateOutput> {
+export async function prCreate(input: CreateInput, sessionOctokit?: import('@octokit/rest').Octokit): Promise<CreateOutput> {
   const validated = CreateInputSchema.parse(input);
   const { owner, repo, title, body, base, head, draft } = validated;
 
-  const octokit = getOctokit();
+  const octokit = sessionOctokit ?? getOctokit();
 
   try {
     const { data } = await octokit.pulls.create({

@@ -8,7 +8,7 @@ import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
-import { stateManager } from '../coordination/state.js';
+import type { CoordinationStateManager } from '../coordination/state.js';
 import type { SummaryInput, SummaryOutput } from '../github/types.js';
 
 export const SummaryInputSchema = z.object({
@@ -38,7 +38,8 @@ export const SummaryOutputSchema = z.object({
  */
 export async function prSummary(
   input: SummaryInput,
-  client: GitHubClient
+  client: GitHubClient,
+  coordination?: CoordinationStateManager
 ): Promise<SummaryOutput> {
   const validated = SummaryInputSchema.parse(input);
   const { owner, repo, pr } = validated;
@@ -49,7 +50,7 @@ export async function prSummary(
     fetchQodoReview(owner, repo, pr),
     fetchGreptileReview(owner, repo, pr),
     getTrackerResolvedMap(owner, repo, pr),
-    stateManager.getResolvedNitpicksCount({ owner, repo, pr })
+    coordination?.getResolvedNitpicksCount({ owner, repo, pr }) ?? Promise.resolve(0)
   ]);
 
   const { comments, totalCount } = threadsResult;

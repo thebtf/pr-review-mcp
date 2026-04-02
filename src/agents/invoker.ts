@@ -5,6 +5,7 @@
 import { getOctokit } from '../github/octokit.js';
 import { StructuredError } from '../github/client.js';
 import { AgentConfig, getAgentConfig, getInvokableAgentIds, InvokableAgentId } from './registry.js';
+import type { Octokit } from '@octokit/rest';
 
 export interface InvokeOptions {
   /** Review focus area: security, performance, best-practices */
@@ -65,11 +66,12 @@ export async function postInvocationComment(
   repo: string,
   pr: number,
   command: string,
-  config: AgentConfig
+  config: AgentConfig,
+  octokit?: Octokit
 ): Promise<InvokeResult> {
   try {
-    const octokit = getOctokit();
-    const { data } = await octokit.issues.createComment({
+    const ok = octokit ?? getOctokit();
+    const { data } = await ok.issues.createComment({
       owner,
       repo,
       issue_number: pr,
@@ -133,7 +135,8 @@ export async function invokeAgent(
   repo: string,
   pr: number,
   agentId: InvokableAgentId,
-  options?: InvokeOptions
+  options?: InvokeOptions,
+  octokit?: Octokit
 ): Promise<InvokeResult> {
   const config = getAgentConfig(agentId);
 
@@ -148,7 +151,7 @@ export async function invokeAgent(
   }
 
   const command = buildCommand(config, options);
-  return postInvocationComment(owner, repo, pr, command, config);
+  return postInvocationComment(owner, repo, pr, command, config, octokit);
 }
 
 /**
@@ -159,10 +162,11 @@ export async function invokeMultipleAgents(
   repo: string,
   pr: number,
   agentIds: InvokableAgentId[],
-  options?: InvokeOptions
+  options?: InvokeOptions,
+  octokit?: Octokit
 ): Promise<InvokeResult[]> {
   const promises = agentIds.map(agentId =>
-    invokeAgent(owner, repo, pr, agentId, options)
+    invokeAgent(owner, repo, pr, agentId, options, octokit)
   );
 
   return Promise.all(promises);

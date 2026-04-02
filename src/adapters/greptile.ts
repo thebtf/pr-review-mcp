@@ -10,6 +10,7 @@
  */
 
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 
 export interface GreptileComment {
   id: string;
@@ -43,9 +44,10 @@ const MARKER = 'Greptile Overview';
 export async function fetchGreptileReview(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<GreptileReview | null> {
-  const greptileComment = await fetchGreptileComment(owner, repo, pr);
+  const greptileComment = await fetchGreptileComment(owner, repo, pr, octokit);
 
   if (!greptileComment) {
     return null;
@@ -60,12 +62,13 @@ export async function fetchGreptileReview(
 async function fetchGreptileComment(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<{ id: number; html_url: string; updated_at: string; body: string } | null> {
   try {
-    const octokit = getOctokit();
-    const comments = await octokit.paginate(
-      octokit.issues.listComments,
+    const ok = octokit ?? getOctokit();
+    const comments = await ok.paginate(
+      ok.issues.listComments,
       { owner, repo, issue_number: pr, per_page: 100 }
     );
 

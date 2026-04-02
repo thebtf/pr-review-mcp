@@ -8,6 +8,8 @@
 import { getOctokit, getGraphQL } from './octokit.js';
 import { QUERIES } from './queries.js';
 import { logger } from '../logging.js';
+import type { Octokit } from '@octokit/rest';
+import type { graphql } from '@octokit/graphql';
 import type { ParentChildEntry } from '../coordination/types.js';
 
 // ============================================================================
@@ -44,14 +46,15 @@ interface StateComment {
 async function findStateComment(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<StateComment | null> {
-  const octokit = getOctokit();
+  const ok = octokit ?? getOctokit();
 
   try {
     // Fetch issue comments (state is stored as issue comment, not review comment)
-    const comments = await octokit.paginate(
-      octokit.issues.listComments,
+    const comments = await ok.paginate(
+      ok.issues.listComments,
       { owner, repo, issue_number: pr, per_page: 100 },
       (response, done) => {
         // Stop pagination if we find the state comment
@@ -151,9 +154,10 @@ function createEmptyState(): PersistentState {
 export async function loadState(
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  octokit?: Octokit
 ): Promise<PersistentState> {
-  const comment = await findStateComment(owner, repo, pr);
+  const comment = await findStateComment(owner, repo, pr, octokit);
 
   if (!comment) {
     return createEmptyState();
@@ -170,10 +174,11 @@ export async function saveState(
   owner: string,
   repo: string,
   pr: number,
-  state: PersistentState
+  state: PersistentState,
+  octokit?: Octokit
 ): Promise<void> {
-  const octokit = getOctokit();
-  const existingComment = await findStateComment(owner, repo, pr);
+  const ok = octokit ?? getOctokit();
+  const existingComment = await findStateComment(owner, repo, pr, octokit);
 
   state.updatedAt = new Date().toISOString();
   const body = formatStateBody(state);
@@ -181,7 +186,7 @@ export async function saveState(
   try {
     if (existingComment) {
       // Update existing comment
-      await octokit.issues.updateComment({
+      await ok.issues.updateComment({
         owner,
         repo,
         comment_id: existingComment.id,
@@ -190,7 +195,7 @@ export async function saveState(
       logger.debug('[state-comment] Updated state comment', { id: existingComment.id });
     } else {
       // Create new comment
-      const { data } = await octokit.issues.createComment({
+      const { data } = await ok.issues.createComment({
         owner,
         repo,
         issue_number: pr,
@@ -211,12 +216,13 @@ export async function addResolvedReaction(
   owner: string,
   repo: string,
   commentId: number,
-  reaction: '+1' | 'hooray' | 'heart' | 'rocket' | 'eyes' = '+1'
+  reaction: '+1' | 'hooray' | 'heart' | 'rocket' | 'eyes' = '+1',
+  octokit?: Octokit
 ): Promise<boolean> {
-  const octokit = getOctokit();
+  const ok = octokit ?? getOctokit();
 
   try {
-    await octokit.reactions.createForIssueComment({
+    await ok.reactions.createForIssueComment({
       owner,
       repo,
       comment_id: commentId,
@@ -250,13 +256,14 @@ const REACTION_MAP: Record<string, string> = {
  */
 export async function addReactionToNode(
   nodeId: string,
-  reaction: '+1' | 'hooray' | 'heart' | 'rocket' | 'eyes' = '+1'
+  reaction: '+1' | 'hooray' | 'heart' | 'rocket' | 'eyes' = '+1',
+  graphqlFn?: typeof graphql
 ): Promise<boolean> {
-  const graphql = getGraphQL();
+  const gql = graphqlFn ?? getGraphQL();
   const reactionContent = REACTION_MAP[reaction] || 'THUMBS_UP';
 
   try {
-    await graphql(QUERIES.addReaction, {
+    await gql(QUERIES.addReaction, {
       subjectId: nodeId,
       content: reactionContent
     });
@@ -277,9 +284,10 @@ export async function registerParentChild(
   repo: string,
   pr: number,
   parentId: string,
-  childIds: string[]
+  childIds: string[],
+  octokit?: Octokit
 ): Promise<void> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
 
   if (state.parentChildren[parentId]) {
     // Already registered
@@ -292,7 +300,7 @@ export async function registerParentChild(
     registeredAt: new Date().toISOString()
   };
 
-  await saveState(owner, repo, pr, state);
+  await saveState(owner, repo, pr, state, octokit);
 }
 
 /**
@@ -302,15 +310,16 @@ export async function markChildResolved(
   owner: string,
   repo: string,
   pr: number,
-  childId: string
+  childId: string,
+  octokit?: Octokit
 ): Promise<{ parentId: string; allResolved: boolean } | null> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
 
   // Find parent for this child
   for (const [parentId, entry] of Object.entries(state.parentChildren)) {
     if (childId in entry.childStatus) {
       entry.childStatus[childId] = 'resolved';
-      await saveState(owner, repo, pr, state);
+      await saveState(owner, repo, pr, state, octokit);
 
       const allResolved = Object.values(entry.childStatus).every(s => s === 'resolved');
       return { parentId, allResolved };
@@ -327,9 +336,10 @@ export async function isChildResolved(
   owner: string,
   repo: string,
   pr: number,
-  childId: string
+  childId: string,
+  octokit?: Octokit
 ): Promise<boolean> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
 
   for (const entry of Object.values(state.parentChildren)) {
     if (entry.childStatus[childId] === 'resolved') {
@@ -347,9 +357,10 @@ export async function getParentIdForChild(
   owner: string,
   repo: string,
   pr: number,
-  childId: string
+  childId: string,
+  octokit?: Octokit
 ): Promise<string | null> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
 
   for (const [parentId, entry] of Object.entries(state.parentChildren)) {
     if (childId in entry.childStatus) {
@@ -368,16 +379,17 @@ export async function markNitpickResolved(
   repo: string,
   pr: number,
   nitpickId: string,
-  agentId: string
+  agentId: string,
+  octokit?: Octokit
 ): Promise<void> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
 
   state.resolvedNitpicks[nitpickId] = {
     resolvedAt: new Date().toISOString(),
     resolvedBy: agentId
   };
 
-  await saveState(owner, repo, pr, state);
+  await saveState(owner, repo, pr, state, octokit);
 }
 
 /**
@@ -387,8 +399,9 @@ export async function isNitpickResolved(
   owner: string,
   repo: string,
   pr: number,
-  nitpickId: string
+  nitpickId: string,
+  octokit?: Octokit
 ): Promise<boolean> {
-  const state = await loadState(owner, repo, pr);
+  const state = await loadState(owner, repo, pr, octokit);
   return nitpickId in state.resolvedNitpicks;
 }
