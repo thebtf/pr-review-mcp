@@ -610,4 +610,3 @@ export class CoordinationStateManager {
   }
 }
 
-export const stateManager = new CoordinationStateManager();

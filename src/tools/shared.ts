@@ -25,7 +25,7 @@ import {
   outsideDiffToProcessedComment
 } from '../extractors/coderabbit-nitpicks.js';
 import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
-import { stateManager } from '../coordination/state.js';
+import type { CoordinationStateManager } from '../coordination/state.js';
 import { loadState } from '../github/state-comment.js';
 
 /**
@@ -63,7 +63,8 @@ async function fetchCodeRabbitNitpicks(
   client: GitHubClient,
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  coordination?: CoordinationStateManager
 ): Promise<ProcessedComment[]> {
   try {
     const data = await client.graphql<ListReviewsData>(QUERIES.listReviews, {
@@ -116,11 +117,15 @@ async function fetchCodeRabbitNitpicks(
         const childIds = children.map(c => c.id);
         
         // Register in state manager
-        await stateManager.registerParentChild(comment.id, childIds, { owner, repo, pr });
-        
+        if (coordination) {
+          await coordination.registerParentChild(comment.id, childIds, { owner, repo, pr });
+        }
+
         // Update resolution status from state
         for (const child of children) {
-          child.resolved = await stateManager.isChildResolved(child.id, { owner, repo, pr });
+          child.resolved = coordination
+            ? await coordination.isChildResolved(child.id, { owner, repo, pr })
+            : false;
         }
         
         // Add children instead of parent
@@ -215,7 +220,8 @@ export async function fetchAllThreads(
   owner: string,
   repo: string,
   pr: number,
-  options: FetchOptions = {}
+  options: FetchOptions = {},
+  coordination?: CoordinationStateManager
 ): Promise<FetchResult> {
   const { filter = {}, maxItems = 100, startCursor = null } = options;
   const comments: ProcessedComment[] = [];
@@ -224,7 +230,7 @@ export async function fetchAllThreads(
 
   // Fetch inline threads and CodeRabbit nitpicks in parallel (only on first page)
   const nitpicksPromise = startCursor === null
-    ? fetchCodeRabbitNitpicks(client, owner, repo, pr)
+    ? fetchCodeRabbitNitpicks(client, owner, repo, pr, coordination)
     : Promise.resolve([]);
 
   while (comments.length < maxItems) {

@@ -217,7 +217,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.structuredResult(await prSummary(args, ctx.githubClient)); }
+      try { return PRReviewMCPServer.structuredResult(await prSummary(args, ctx.githubClient, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -303,7 +303,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.textResult(await prResolveWithContext(args, ctx.githubClient)); }
+      try { return PRReviewMCPServer.textResult(await prResolveWithContext(args, ctx.githubClient, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -383,7 +383,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.textResult(await prClaimWork(args, ctx.githubClient)); }
+      try { return PRReviewMCPServer.textResult(await prClaimWork(args, ctx.githubClient, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -392,8 +392,9 @@ export class PRReviewMCPServer {
       description: 'Report completion status for a claimed file partition',
       inputSchema: ReportProgressSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prReportProgress(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prReportProgress(args, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -405,7 +406,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, ctx.githubClient)); }
+      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, ctx.githubClient, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -426,7 +427,8 @@ export class PRReviewMCPServer {
               'Confirmation required: set confirm=true or approve the elicitation prompt', false);
           }
         }
-        return PRReviewMCPServer.textResult(await prResetCoordination({ ...args, confirm: true }));
+        const ctx = this.sessionManager.getContext(extra);
+        return PRReviewMCPServer.textResult(await prResetCoordination({ ...args, confirm: true }, ctx.coordination));
       } catch (e) { throw toMcpError(e); }
     });
 
@@ -435,8 +437,9 @@ export class PRReviewMCPServer {
       description: 'Report orchestrator phase transition (called by background subagent)',
       inputSchema: ProgressUpdateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.textResult(await prProgressUpdate(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.textResult(await prProgressUpdate(args, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -446,8 +449,9 @@ export class PRReviewMCPServer {
       inputSchema: ProgressCheckSchema,
       outputSchema: ProgressCheckOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async (args) => {
-      try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args)); }
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args, ctx.coordination)); }
       catch (e) { throw toMcpError(e); }
     });
 

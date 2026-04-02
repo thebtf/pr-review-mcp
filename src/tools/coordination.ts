@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { logger } from '../logging.js';
-import { stateManager } from '../coordination/state.js';
+import { CoordinationStateManager } from '../coordination/state.js';
 import {
   ClaimWorkSchema,
   ReportProgressSchema,
@@ -103,7 +103,8 @@ async function initializeRun(
   client: GitHubClient,
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  coordination: CoordinationStateManager
 ): Promise<string> {
   const octokit = getOctokit();
 
@@ -122,7 +123,7 @@ async function initializeRun(
   const partitions = createPartitionsFromComments(comments);
 
   // 3. Init run
-  return stateManager.initRun({ owner, repo, pr }, headSha, partitions);
+  return coordination.initRun({ owner, repo, pr }, headSha, partitions);
 }
 
 /**
@@ -134,7 +135,8 @@ async function refreshPartitions(
   client: GitHubClient,
   owner: string,
   repo: string,
-  pr: number
+  pr: number,
+  coordination: CoordinationStateManager
 ): Promise<number> {
   // Fetch current unresolved comments
   const { comments } = await fetchAllThreads(client, owner, repo, pr, {
@@ -146,7 +148,7 @@ async function refreshPartitions(
   const newPartitions = createPartitionsFromComments(comments);
 
   // Add new comments/partitions to the existing run
-  return stateManager.addPartitions(newPartitions);
+  return coordination.addPartitions(newPartitions);
 }
 
 // ============================================================================
@@ -155,12 +157,13 @@ async function refreshPartitions(
 
 export async function prClaimWork(
   input: ClaimWorkInput,
-  client: GitHubClient
+  client: GitHubClient,
+  coordination: CoordinationStateManager
 ) {
   const { agent_id, pr_info, force } = input;
 
-  const isActive = stateManager.isRunActive();
-  const currentRun = stateManager.getCurrentRun();
+  const isActive = coordination.isRunActive();
+  const currentRun = coordination.getCurrentRun();
 
   // Determine if we need to initialize a new run
   let needsInit = false;
@@ -189,7 +192,7 @@ export async function prClaimWork(
       const hasCompletedAt = !!currentRun.completedAt;
 
       // Auto-allow replacement if run is old (>5 minutes) - workers complete quickly
-      const runAge = stateManager.getRunAge();
+      const runAge = coordination.getRunAge();
       const autoForce = (runAge && runAge > OLD_RUN_THRESHOLD_MS) || hasCompletedAt;
 
       if (isActive && !force && !autoForce) {
@@ -217,23 +220,23 @@ export async function prClaimWork(
   }
 
   if (needsInit) {
-    await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr);
+    await initializeRun(client, pr_info!.owner, pr_info!.repo, pr_info!.pr, coordination);
   }
 
-  let partition = stateManager.claimPartition(agent_id);
+  let partition = coordination.claimPartition(agent_id);
 
   // If no partition available, check if we should refresh with new unresolved comments
   // This handles comments added by review agents AFTER the initial run started
-  if (!partition && stateManager.allPartitionsDone()) {
-    const run = stateManager.getCurrentRun();
+  if (!partition && coordination.allPartitionsDone()) {
+    const run = coordination.getCurrentRun();
     if (run) {
       const { owner, repo, pr } = run.prInfo;
-      const touchedPartitionsCount = await refreshPartitions(client, owner, repo, pr);
+      const touchedPartitionsCount = await refreshPartitions(client, owner, repo, pr, coordination);
 
       if (touchedPartitionsCount > 0) {
         logger.warning(`[coordination] Refreshed partitions - added/updated ${touchedPartitionsCount} partitions`);
         // Try to claim again after refresh
-        partition = stateManager.claimPartition(agent_id);
+        partition = coordination.claimPartition(agent_id);
       }
     }
   }
@@ -252,14 +255,15 @@ export async function prClaimWork(
 }
 
 export async function prReportProgress(
-  input: ReportProgressInput
+  input: ReportProgressInput,
+  coordination: CoordinationStateManager
 ): Promise<
   | { status: 'error'; message: string }
   | { status: 'success'; file: string; new_status: 'done' | 'failed' | 'skipped' }
 > {
   const { agent_id, file, status, result } = input;
 
-  const success = stateManager.reportProgress(agent_id, file, status, result);
+  const success = coordination.reportProgress(agent_id, file, status, result);
 
   if (!success) {
     return {
@@ -277,12 +281,13 @@ export async function prReportProgress(
 
 export async function prGetWorkStatus(
   input: GetWorkStatusInput,
-  client: GitHubClient
+  client: GitHubClient,
+  coordination: CoordinationStateManager = new CoordinationStateManager()
 ) {
   // We currently ignore run_id in input as we only support singleton active run
-  const { active, ...status } = stateManager.getStatus();
-  const isActive = stateManager.isRunActive();
-  const runAge = stateManager.getRunAge();
+  const { active, ...status } = coordination.getStatus();
+  const isActive = coordination.isRunActive();
+  const runAge = coordination.getRunAge();
 
   // Check for pending AI reviewers if we have an active run with PR info
   let pendingAgents: string[] = [];
@@ -307,7 +312,8 @@ export async function prGetWorkStatus(
 }
 
 export async function prResetCoordination(
-  input: ResetCoordinationInput
+  input: ResetCoordinationInput,
+  coordination: CoordinationStateManager
 ) {
   // Validate confirm field
   if (!input.confirm) {
@@ -318,10 +324,10 @@ export async function prResetCoordination(
     );
   }
 
-  const currentRun = stateManager.getCurrentRun();
-  const wasActive = stateManager.isRunActive();
+  const currentRun = coordination.getCurrentRun();
+  const wasActive = coordination.isRunActive();
 
-  stateManager.resetRun();
+  coordination.resetRun();
 
   return {
     status: 'reset',
@@ -335,21 +341,23 @@ export async function prResetCoordination(
 }
 
 export async function prProgressUpdate(
-  input: ProgressUpdateInput
+  input: ProgressUpdateInput,
+  coordination: CoordinationStateManager
 ) {
-  stateManager.updateOrchestratorPhase(input.phase, input.detail);
+  coordination.updateOrchestratorPhase(input.phase, input.detail);
   return { status: 'ok', phase: input.phase, detail: input.detail };
 }
 
 export async function prProgressCheck(
-  _input: ProgressCheckInput
+  _input: ProgressCheckInput,
+  coordination: CoordinationStateManager
 ) {
-  const progress = stateManager.getOrchestratorProgress();
-  const status = stateManager.getStatus();
+  const progress = coordination.getOrchestratorProgress();
+  const status = coordination.getStatus();
   return {
     orchestrator: progress,
     run: {
-      active: stateManager.isRunActive(),
+      active: coordination.isRunActive(),
       progress: status.progress,
       total: status.total,
       agents: (status as any).agents?.length,
