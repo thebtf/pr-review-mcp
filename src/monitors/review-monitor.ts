@@ -15,6 +15,7 @@ import {
   type AgentCompletionResult,
   type CompletionDetectionResult,
 } from '../agents/completion-detector.js';
+import { getOctokit } from '../github/octokit.js';
 import { INVOKABLE_AGENTS, type InvokableAgentId } from '../agents/registry.js';
 
 const MAX_POLL_INTERVAL_MS = 120_000;
@@ -38,7 +39,7 @@ export interface AwaitParams {
 export interface AwaitResult {
   /** True when ALL agents completed successfully (none timed out) */
   completed: boolean;
-  /** True when global timeout was reached */
+  /** True when global timeout was reached OR any agent exceeded its per-agent timeout */
   timedOut: boolean;
   /** True when some agents completed but others timed out */
   partial: boolean;
@@ -85,14 +86,12 @@ export class ReviewMonitor {
    */
   public async awaitReviews(params: AwaitParams): Promise<AwaitResult> {
     const key = this.getMonitorKey(params);
-    const controller = new AbortController();
-    return this.monitor(params, key, controller.signal);
+    return this.monitor(params, key);
   }
 
   private async monitor(
     params: AwaitParams,
     key: string,
-    signal: AbortSignal,
   ): Promise<AwaitResult> {
     const { owner, repo, pr, agents, since, timeoutMs } = params;
     let pollIntervalMs = params.pollIntervalMs;
@@ -103,7 +102,17 @@ export class ReviewMonitor {
     const agentTimedOutSet = new Set<InvokableAgentId>();
     let lastDetection: CompletionDetectionResult | null = null;
 
-    while (!signal.aborted) {
+    // Fetch head SHA once to avoid re-fetching it on every poll iteration
+    let headSha: string | undefined;
+    try {
+      const ok = params.octokit ?? getOctokit();
+      const prData = await ok.pulls.get({ owner, repo, pull_number: pr });
+      headSha = prData.data.head.sha;
+    } catch {
+      // headSha remains undefined; fetchCompletionStatus will fall back to fetching it internally
+    }
+
+    while (true) {
       const elapsedMs = Date.now() - startedAt;
 
       // Global timeout
@@ -116,7 +125,7 @@ export class ReviewMonitor {
       // Poll completion status
       try {
         lastDetection = await fetchCompletionStatus(
-          owner, repo, pr, agents, since, params.octokit,
+          owner, repo, pr, agents, since, params.octokit, headSha,
         );
         pollIntervalMs = params.pollIntervalMs;
         rateLimitRetries = 0;
@@ -133,7 +142,7 @@ export class ReviewMonitor {
           this.log('warning', `[review-monitor] ${key}: GitHub polling error: ${message}`);
         }
 
-        await this.sleep(pollIntervalMs, signal);
+        await this.sleep(pollIntervalMs);
         continue;
       }
 
@@ -164,15 +173,8 @@ export class ReviewMonitor {
         return result;
       }
 
-      await this.sleep(pollIntervalMs, signal);
+      await this.sleep(pollIntervalMs);
     }
-
-    // Cancelled
-    const canceledResult = this.buildResult(
-      lastDetection, agents, agentTimedOutSet, Date.now() - startedAt, false,
-    );
-    this.sendProgress(key, canceledResult, true);
-    return canceledResult;
   }
 
   private buildResult(
@@ -208,7 +210,7 @@ export class ReviewMonitor {
 
     return {
       completed: allReady,
-      timedOut: globalTimedOut,
+      timedOut: globalTimedOut || agentTimedOut > 0,
       partial: someReady && (globalTimedOut || agentTimedOut > 0),
       elapsedMs,
       agents: agentStatuses,
@@ -286,21 +288,8 @@ export class ReviewMonitor {
     return `${params.owner}/${params.repo}#${params.pr}@${params.since}[${agentsSorted}]`;
   }
 
-  private sleep(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise<void>((resolve) => {
-      if (signal.aborted) {
-        resolve();
-        return;
-      }
-
-      const timer = setTimeout(resolve, ms);
-      const handleAbort = (): void => {
-        clearTimeout(timer);
-        resolve();
-      };
-
-      signal.addEventListener('abort', handleAbort, { once: true });
-    });
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>(resolve => setTimeout(resolve, ms));
   }
 
   private log(level: 'info' | 'warning', message: string): void {

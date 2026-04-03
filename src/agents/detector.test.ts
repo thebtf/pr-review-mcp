@@ -70,6 +70,15 @@ describe('getAgentFromAuthor', () => {
     expect(getAgentFromAuthor('copilot-pull-request-reviewer[bot]')).toBe('copilot');
   });
 
+  it('identifies Greptile', () => {
+    expect(getAgentFromAuthor('greptile-apps[bot]')).toBe('greptile');
+    expect(getAgentFromAuthor('greptile-apps')).toBe('greptile');
+  });
+
+  it('does not match Greptile partial login', () => {
+    expect(getAgentFromAuthor('greptile-apps-something')).toBe(null);
+  });
+
   it('returns null for unknown authors', () => {
     expect(getAgentFromAuthor('some-random-user')).toBe(null);
     expect(getAgentFromAuthor('dependabot[bot]')).toBe(null);

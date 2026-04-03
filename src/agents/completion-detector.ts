@@ -38,8 +38,6 @@ export interface AgentCompletionResult {
   source?: CompletionSource;
   /** ISO timestamp of the activity that confirmed completion */
   lastActivity?: string;
-  /** Whether this agent exceeded its maxWaitMs */
-  timedOut: boolean;
   /** Human-readable detail for logging */
   detail?: string;
 }
@@ -88,11 +86,14 @@ async function paginateWithLimit<T>(
   iterator: AsyncIterable<{ data: T[] }>,
   limit: number,
 ): Promise<T[]> {
+  // Collect all pages, keeping only the last `limit` items so that the `since`
+  // filter applied by callers sees the most-recent activity rather than the
+  // oldest `limit` entries (GitHub returns items in ascending chronological order).
   const results: T[] = [];
   for await (const page of iterator) {
     results.push(...page.data);
-    if (results.length >= limit) {
-      return results.slice(0, limit);
+    if (results.length > limit) {
+      results.splice(0, results.length - limit);
     }
   }
   return results;
@@ -179,8 +180,7 @@ export async function fetchCompletionStatus(
         name: agentId,
         ready: false,
         confidence: 'low' as CompletionConfidence,
-        timedOut: false,
-        detail: 'Unknown agent',
+          detail: 'Unknown agent',
       };
     }
 
@@ -238,7 +238,6 @@ function evaluateAgent(
     name: config.name,
     ready: false,
     confidence: 'low',
-    timedOut: false,
   };
 }
 
@@ -264,8 +263,7 @@ function evaluateCheckRuns(
         confidence: 'medium',
         source: 'check_runs',
         lastActivity: cr.completed_at ?? undefined,
-        timedOut: false,
-        detail: `Check run "${cr.name}" completed (conclusion: ${cr.conclusion})`,
+          detail: `Check run "${cr.name}" completed (conclusion: ${cr.conclusion})`,
       };
     }
   }
@@ -322,8 +320,7 @@ function evaluateReviews(
         confidence: 'high',
         source: 'reviews',
         lastActivity: review.submitted_at ?? undefined,
-        timedOut: false,
-        detail: `Review APPROVED (no issues found)`,
+          detail: `Review APPROVED (no issues found)`,
       };
     }
 
@@ -335,29 +332,29 @@ function evaluateReviews(
         confidence: 'high',
         source: 'reviews',
         lastActivity: review.submitted_at ?? undefined,
-        timedOut: false,
-        detail: `Review ${review.state} with body match`,
+          detail: `Review ${review.state} with body match`,
       };
     }
   }
 
-  // Author matched + submitted after since, but body didn't match pattern.
-  // Still count as ready with medium confidence (body patterns may evolve).
-  const latest = fresh[fresh.length - 1];
-  if (latest) {
-    const body = latest.body ?? '';
-    // Only if NOT excluded
-    if (!strategy.excludePatterns?.some(p => p.test(body))) {
-      return {
-        agentId,
-        name: config.name,
-        ready: true,
-        confidence: 'medium',
-        source: 'reviews',
-        lastActivity: latest.submitted_at ?? undefined,
-        timedOut: false,
-        detail: `Review ${latest.state} (body pattern not matched, but author + timestamp valid)`,
-      };
+  // Fallback: author matched + submitted after since, but no bodyPattern is configured.
+  // When bodyPattern IS defined but didn't match, we must NOT accept the review — it may
+  // be a placeholder or error body that the exclude patterns didn't catch.
+  if (!strategy.bodyPattern) {
+    const latest = fresh[fresh.length - 1];
+    if (latest) {
+      const body = latest.body ?? '';
+      if (!strategy.excludePatterns?.some(p => p.test(body))) {
+        return {
+          agentId,
+          name: config.name,
+          ready: true,
+          confidence: 'medium',
+          source: 'reviews',
+          lastActivity: latest.submitted_at ?? undefined,
+          detail: `Review ${latest.state} (no bodyPattern configured; author + timestamp valid)`,
+        };
+      }
     }
   }
 
@@ -414,8 +411,7 @@ function evaluateIssueComments(
         confidence: 'high',
         source: 'issue_comments',
         lastActivity: ts,
-        timedOut: false,
-        detail: `Issue comment with body match`,
+          detail: `Issue comment with body match`,
       };
     }
   }
@@ -426,6 +422,34 @@ function evaluateIssueComments(
 // ============================================================================
 // Data Fetching
 // ============================================================================
+
+/**
+ * Returns the HTTP status code from an Octokit or fetch error, or null if not determinable.
+ */
+function getErrorStatus(error: unknown): number | null {
+  const errObj = error as { status?: unknown; response?: { status?: unknown } } | null;
+  if (errObj && typeof errObj.status === 'number') return errObj.status;
+  if (errObj?.response && typeof errObj.response.status === 'number') return errObj.response.status;
+  if (error instanceof Error) {
+    const match = /\b(403|429)\b/.exec(error.message);
+    if (match) return Number(match[0]);
+  }
+  return null;
+}
+
+/**
+ * Returns true for rate-limit and abuse-detection errors that ReviewMonitor should back off on.
+ * These errors must propagate so the monitor's throttling logic can engage.
+ */
+function isRetryableApiError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (status === 429) return true;
+  if (status === 403) {
+    const msg = error instanceof Error ? error.message.toLowerCase() : '';
+    return msg.includes('rate limit') || msg.includes('abuse detection') || msg.includes('secondary rate');
+  }
+  return false;
+}
 
 async function fetchReviews(
   ok: Octokit,
@@ -444,6 +468,7 @@ async function fetchReviews(
       200,
     );
   } catch (error) {
+    if (isRetryableApiError(error)) throw error;
     logger.warning(`[completion] Failed to fetch reviews: ${error}`);
     return [];
   }
@@ -466,6 +491,7 @@ async function fetchIssueComments(
       200,
     );
   } catch (error) {
+    if (isRetryableApiError(error)) throw error;
     logger.warning(`[completion] Failed to fetch issue comments: ${error}`);
     return [];
   }
@@ -491,6 +517,7 @@ async function fetchCheckRuns(
       completed_at: cr.completed_at,
     }));
   } catch (error) {
+    if (isRetryableApiError(error)) throw error;
     logger.debug(`[completion] Failed to fetch check runs: ${error}`);
     return [];
   }
@@ -506,6 +533,7 @@ async function fetchHeadShaAndCheckRuns(
     const prData = await ok.pulls.get({ owner, repo, pull_number: pr });
     return fetchCheckRuns(ok, owner, repo, prData.data.head.sha);
   } catch (error) {
+    if (isRetryableApiError(error)) throw error;
     logger.debug(`[completion] Failed to fetch head SHA for check runs: ${error}`);
     return [];
   }

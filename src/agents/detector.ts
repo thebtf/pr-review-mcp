@@ -90,17 +90,29 @@ export async function detectReviewedAgents(
     const ok = octokit ?? getOctokit();
     const allAgents = getInvokableAgentIds();
 
-    // Use unified completion detector (since=null means all time)
-    const detection = await fetchCompletionStatus(owner, repo, pr, allAgents, null, ok);
+    // Fetch PR data once — reused for headSha (check runs) and requested reviewers,
+    // eliminating a redundant pulls.get call inside fetchHeadShaAndCheckRuns.
+    const prData = await ok.pulls.get({ owner, repo, pull_number: pr });
+    const headSha = prData.data.head.sha;
+
+    // Use unified completion detector (since=null means all time).
+    // Supplying headSha avoids a second pulls.get inside completion-detector.
+    const detection = await fetchCompletionStatus(owner, repo, pr, allAgents, null, ok, headSha);
 
     for (const agentResult of detection.agents) {
       if (agentResult.ready) {
         reviewed.add(agentResult.agentId);
+        // Use the canonical GitHub author login (from authorPattern) so that
+        // reviewAuthor is consistent with the pending case which uses the actual login.
+        const config = INVOKABLE_AGENTS[agentResult.agentId];
+        const reviewAuthor = Array.isArray(config.authorPattern)
+          ? config.authorPattern[0]
+          : config.authorPattern;
         details.push({
           agentId: agentResult.agentId,
           status: 'reviewed',
           reviewedAt: agentResult.lastActivity,
-          reviewAuthor: agentResult.agentId,
+          reviewAuthor,
         });
         logger.debug(
           `[detector] Found ${agentResult.agentId} review ` +
@@ -109,8 +121,7 @@ export async function detectReviewedAgents(
       }
     }
 
-    // Check requested reviewers for pending status
-    const prData = await ok.pulls.get({ owner, repo, pull_number: pr });
+    // Check requested reviewers for pending status (reuse already-fetched prData).
     const requestedReviewers = prData.data.requested_reviewers ?? [];
     for (const reviewer of requestedReviewers) {
       if (!reviewer || !('login' in reviewer)) continue;
