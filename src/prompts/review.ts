@@ -890,14 +890,14 @@ ${orchestratorContent}`;
 function generateBatchPrompt(context: PromptContext, delegation: boolean = true): string {
   const { targets, desiredWorkers, envConfig } = context;
 
-  const prList = targets.map(t => `#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
+  const prList = targets.map(t => `${t.owner}/${t.repo}#${t.pr}(${t.unresolved ?? '?'})`).join(', ');
 
   const orchestratorContent = `[EXECUTE IMMEDIATELY — NO DISCUSSION, NO QUESTIONS]
 
 **Batch:** ${prList}
 **Config:** agents=${envConfig.agents.join(',')} | mode=${envConfig.mode} | workers=${desiredWorkers}
 
-Process ${envConfig.mode === 'parallel' ? 'in parallel' : 'sequentially'}, starting with #${targets[0].pr}.
+Process ${envConfig.mode === 'parallel' ? 'in parallel' : 'sequentially'}, starting with ${targets[0].owner}/${targets[0].repo}#${targets[0].pr}.
 
 ---
 
