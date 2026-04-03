@@ -201,7 +201,7 @@ When called from the main conversation context (not as a background agent):
 - After \`pr_invoke\`, use the \`since\` field from its response
 - Launch a **background Task** wrapping \`pr_await_reviews\`:
   \`\`\`
-  Task({ prompt: "Call pr_await_reviews({ owner, repo, pr, since })", run_in_background: true })
+  Task({ prompt: "Call pr_await_reviews({ owner: '<OWNER>', repo: '<REPO>', pr: <PR>, since: '<SINCE>' })", run_in_background: true })
   \`\`\`
 - Continue with other work — you will be notified when the Task completes
 - On Task completion, read the result and proceed to Step 6 or Step 8
@@ -213,6 +213,8 @@ const ORCHESTRATOR_WORKFLOW = `
 ## EXECUTION MODE: AUTONOMOUS
 
 **Execute ALL steps without stopping. Do NOT ask for confirmation.**
+
+**PARAMETER SUBSTITUTION:** In all tool calls below, replace \`owner\`, \`repo\`, \`pr\` with the actual values from the **Target** or **Batch** line above. They are placeholders, NOT literal strings.
 
 ### ORCHESTRATOR ROLE
 
