@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getOctokit } from '../github/octokit.js';
+import type { Octokit } from '@octokit/rest';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { logger } from '../logging.js';
 import { CoordinationStateManager } from '../coordination/state.js';
@@ -284,7 +285,8 @@ export async function prReportProgress(
 export async function prGetWorkStatus(
   input: GetWorkStatusInput,
   client: GitHubClient,
-  coordination: CoordinationStateManager
+  coordination: CoordinationStateManager,
+  octokit?: Octokit,
 ) {
   // We currently ignore run_id in input as we only support singleton active run
   const { active, ...status } = coordination.getStatus();
@@ -294,10 +296,11 @@ export async function prGetWorkStatus(
   // Check for pending AI reviewers if we have an active run with PR info
   let pendingAgents: string[] = [];
   let reviewedAgents: string[] = [];
-  
+
   if (status.prInfo) {
     const { owner, repo, pr } = status.prInfo;
-    const detection = await detectReviewedAgents(client, owner, repo, pr);
+    // Pass session-scoped octokit to avoid falling back to global singleton
+    const detection = await detectReviewedAgents(client, owner, repo, pr, octokit);
     pendingAgents = [...detection.pending];
     reviewedAgents = [...detection.reviewed];
   }

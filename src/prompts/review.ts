@@ -237,7 +237,8 @@ You are the ORCHESTRATOR. You spawn workers, monitor progress, ensure build pass
 |------|-------------|
 | **NO AUTO-MERGE** | NEVER call pr_merge |
 | **ESCAPE HATCH** | Stop if \`pause-ai-review\` label present |
-| **FIX ALL** | Process ALL comments. No skipping. |
+| **FIX ALL SEVERITIES** | You MUST process EVERY comment: CRIT, MAJOR, MINOR, NITPICK. Skipping MINOR or NITPICK = VIOLATION. There is NO "too minor to fix". |
+| **CONFIDENCE-CHECK EACH** | You MUST verify each suggestion BEFORE applying. AI reviewers produce WRONG suggestions. If a suggestion breaks code or is factually incorrect, you MUST resolve the thread with a reply explaining WHY it is wrong. Blindly applying suggestions = VIOLATION. |
 | **BUILD MUST PASS** | Never finish with broken build. |
 | **MCP = SOURCE OF TRUTH** | Always validate completion with pr_get_work_status. |
 
@@ -423,10 +424,16 @@ pr_report_progress {
 ### 4. LOOP
 Return to Step 1 (claim next partition).
 
-## Rules
+## Rules (MANDATORY — violations are failures)
 - NO questions, NO confirmations
-- Process ALL comments in partition before reporting
-- **ALWAYS call pr_resolve for each processed comment (mandatory)**
+- You MUST process EVERY comment in the partition — CRIT, MAJOR, MINOR, NITPICK. NO EXCEPTIONS. Skipping a comment because it is "minor" or "nitpick" = FAILURE.
+- You MUST call pr_resolve for EVERY processed comment
+- You MUST CONFIDENCE-CHECK each suggestion BEFORE applying it:
+  1. READ the suggestion carefully
+  2. VERIFY it is factually correct and will not break existing behavior
+  3. If CORRECT → apply the fix, then pr_resolve
+  4. If WRONG → pr_resolve with a reply explaining WHY the suggestion is incorrect
+  5. BLINDLY APPLYING a wrong suggestion = FAILURE. SKIPPING a correct suggestion = FAILURE.
 - If unsure about fix, make minimal safe change
 - Before EXIT: run build command if you modified code
 \`\`\`

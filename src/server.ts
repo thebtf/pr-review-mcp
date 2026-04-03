@@ -406,7 +406,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, ctx.githubClient, ctx.coordination)); }
+      try { return PRReviewMCPServer.structuredResult(await prGetWorkStatus(args, ctx.githubClient, ctx.coordination, ctx.octokit)); }
       catch (e) { throw toMcpError(e); }
     });
 

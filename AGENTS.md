@@ -63,10 +63,10 @@ pr-review-mcp/
 │   │   ├── qodo.ts            # Qodo issue comment adapter
 │   │   └── greptile.ts        # Greptile issue comment adapter
 │   ├── agents/
-│   │   ├── registry.ts        # Agent configurations
-│   │   ├── invoker.ts         # Agent invocation logic
-│   │   ├── detector.ts        # Smart agent detection
-│   │   └── status.ts          # Agent status detection (shared)
+│   │   ├── registry.ts           # Agent configs + CompletionStrategy
+│   │   ├── completion-detector.ts # Unified completion detection engine
+│   │   ├── invoker.ts            # Agent invocation logic
+│   │   └── detector.ts           # Smart detection (delegates to completion-detector)
 │   ├── extractors/
 │   │   ├── severity.ts        # Severity extraction
 │   │   ├── prompt.ts          # AI prompt extraction
@@ -152,10 +152,32 @@ server.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
 | Sourcery | Inline reviews | `sourcery-ai[bot]` |
 | Codex | Inline reviews | `chatgpt-codex-connector[bot]` |
 | **Qodo** | **Issue comment** | `qodo-code-review[bot]` |
-| **Greptile** | **Issue comment + inline** | `greptile-code-reviews[bot]` |
+| **Greptile** | **Issue comment + inline** | `greptile-apps[bot]` |
 
 Qodo uses a "persistent review" pattern — one issue comment updated on each commit.
 Greptile posts an overview issue comment + inline review comments.
+
+---
+
+## COMPLETION DETECTION
+
+Unified `AgentCompletionDetector` (`src/agents/completion-detector.ts`) detects review completion per-agent using strategy-based approach:
+
+| Agent | Primary Signal | Body Pattern | Expected Time | Max Wait |
+|-------|---------------|-------------|---------------|----------|
+| CodeRabbit | Check run `completed` OR PR review | `**Actionable comments posted: N**` | 5 min | 12 min |
+| Gemini | PR review (state=COMMENTED) | `## Code Review` | 4 min | 10 min |
+| Copilot | PR review (state=COMMENTED) | `## Pull request overview` | 30 sec | 30 min |
+| Sourcery | PR review (state=COMMENTED) | `Hey - I've found N issues` | 2 min | 5 min |
+| Codex | PR review (state=COMMENTED) | `### 💡 Codex Review` | 5 min | 10 min |
+| Qodo | Issue comment (persistent) | `<h3>Code Review by Qodo</h3>` or `## PR Reviewer Guide` | 6 min | 10 min |
+| Greptile | PR review OR issue comment | `files reviewed` or `Greptile Overview` | 5 min | 10 min |
+
+**Key rules:**
+- Reviews with `state === 'PENDING'` are filtered out (draft/unsent)
+- Exclude patterns reject false positives (Gemini placeholders, rate limit messages, setup prompts)
+- Per-agent `maxWaitMs` prevents indefinite waiting for misconfigured agents
+- `pr_await_reviews` returns partial results when some agents complete but others timeout
 
 ---
 
@@ -163,7 +185,7 @@ Greptile posts an overview issue comment + inline review comments.
 
 `pr_invoke` includes smart detection to avoid re-invoking agents that already reviewed:
 
-- Detects agents that already submitted reviews (by author login)
+- Detects agents that already submitted reviews (by author login, body pattern, check runs)
 - Skips agents that already reviewed → returns in `skipped` array
 - Only CodeRabbit is invoked by default (configurable via `.github/pr-review.json`)
 

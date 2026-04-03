@@ -14,7 +14,7 @@ import {
   fetchAgentStatus,
   type AgentStatus,
   type AgentsStatus,
-} from '../agents/status.js';
+} from '../agents/completion-detector.js';
 
 // ============================================================================
 // Schema
@@ -35,7 +35,7 @@ export type PollInput = z.infer<typeof PollInputSchema>;
 // Types
 // ============================================================================
 
-export type { AgentStatus, AgentsStatus } from '../agents/status.js';
+export type { AgentStatus, AgentsStatus } from '../agents/completion-detector.js';
 
 export interface CommitInfo {
   sha: string;

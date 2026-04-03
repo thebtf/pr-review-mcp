@@ -15,8 +15,8 @@ describe('matchesAuthorPattern', () => {
       expect(matchesAuthorPattern('coderabbitai[bot]', 'coderabbitai')).toBe(true);
     });
 
-    it('matches pattern prefix', () => {
-      expect(matchesAuthorPattern('coderabbitai-something', 'coderabbitai')).toBe(true);
+    it('does not match partial prefix (exact match only)', () => {
+      expect(matchesAuthorPattern('coderabbitai-something', 'coderabbitai')).toBe(false);
     });
 
     it('is case insensitive', () => {
@@ -68,6 +68,15 @@ describe('getAgentFromAuthor', () => {
 
   it('identifies Copilot', () => {
     expect(getAgentFromAuthor('copilot-pull-request-reviewer[bot]')).toBe('copilot');
+  });
+
+  it('identifies Greptile', () => {
+    expect(getAgentFromAuthor('greptile-apps[bot]')).toBe('greptile');
+    expect(getAgentFromAuthor('greptile-apps')).toBe('greptile');
+  });
+
+  it('does not match Greptile partial login', () => {
+    expect(getAgentFromAuthor('greptile-apps-something')).toBe(null);
   });
 
   it('returns null for unknown authors', () => {
