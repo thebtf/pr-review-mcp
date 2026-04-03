@@ -24,7 +24,7 @@ export const AwaitInputSchema = z.object({
   agents: z.array(z.string()).optional(),
   since: z.string().datetime(),
   timeout_ms: z.number().int().positive().optional().default(600000),
-  poll_interval_ms: z.number().int().positive().optional().default(30000),
+  poll_interval_ms: z.number().int().positive().optional().default(15000),
 });
 
 export type AwaitInput = z.infer<typeof AwaitInputSchema>;

@@ -1,11 +1,21 @@
 /**
  * ReviewMonitor — server-side polling for AI review agent completion.
+ *
+ * Redesigned with:
+ * - Per-agent timeout via maxWaitMs from CompletionStrategy
+ * - Partial completion: returns results as soon as all agents are ready OR individually timed out
+ * - No dedup map: each call gets fresh polling (eliminates stale promise bug)
+ * - Uses unified AgentCompletionDetector instead of old status.ts
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Octokit } from '@octokit/rest';
-import { fetchAgentStatusForAgents, type AgentStatus } from '../agents/status.js';
-import type { InvokableAgentId } from '../agents/registry.js';
+import {
+  fetchCompletionStatus,
+  type AgentCompletionResult,
+  type CompletionDetectionResult,
+} from '../agents/completion-detector.js';
+import { INVOKABLE_AGENTS, type InvokableAgentId } from '../agents/registry.js';
 
 const MAX_POLL_INTERVAL_MS = 120_000;
 
@@ -26,20 +36,36 @@ export interface AwaitParams {
 }
 
 export interface AwaitResult {
+  /** True when ALL agents completed successfully (none timed out) */
   completed: boolean;
+  /** True when global timeout was reached */
   timedOut: boolean;
+  /** True when some agents completed but others timed out */
+  partial: boolean;
   elapsedMs: number;
-  agents: AgentStatus[];
+  agents: AgentAwaitStatus[];
   summary: {
     ready: number;
     pending: number;
+    agentTimedOut: number;
     total: number;
   };
 }
 
-interface ActiveMonitor {
-  promise: Promise<AwaitResult>;
-  cancel: () => void;
+export interface AgentAwaitStatus {
+  agentId: InvokableAgentId;
+  name: string;
+  ready: boolean;
+  /** This specific agent exceeded its maxWaitMs */
+  agentTimedOut: boolean;
+  /** Confidence level from completion detector */
+  confidence?: string;
+  /** Which source confirmed completion */
+  source?: string;
+  /** ISO timestamp of the activity that confirmed completion */
+  lastActivity?: string;
+  /** Human-readable detail */
+  detail?: string;
 }
 
 // ============================================================================
@@ -48,36 +74,19 @@ interface ActiveMonitor {
 
 export class ReviewMonitor {
   private readonly server: Server;
-  private readonly activeMonitors = new Map<string, ActiveMonitor>();
 
   constructor(server: Server) {
     this.server = server;
   }
 
+  /**
+   * Block until all agents complete or timeout.
+   * Each call starts fresh polling — no dedup map.
+   */
   public async awaitReviews(params: AwaitParams): Promise<AwaitResult> {
     const key = this.getMonitorKey(params);
-
-    const existing = this.activeMonitors.get(key);
-    if (existing) {
-      return existing.promise;
-    }
-
     const controller = new AbortController();
-    const cancel = () => {
-      controller.abort();
-    };
-
-    const promise = this.monitor(params, key, controller.signal)
-      .finally(() => {
-        this.activeMonitors.delete(key);
-      });
-
-    this.activeMonitors.set(key, {
-      promise,
-      cancel,
-    });
-
-    return promise;
+    return this.monitor(params, key, controller.signal);
   }
 
   private async monitor(
@@ -89,18 +98,26 @@ export class ReviewMonitor {
     let pollIntervalMs = params.pollIntervalMs;
     let rateLimitRetries = 0;
     const startedAt = Date.now();
-    let status = this.createFallbackStatus(agents);
+
+    // Track per-agent timeout state
+    const agentTimedOutSet = new Set<InvokableAgentId>();
+    let lastDetection: CompletionDetectionResult | null = null;
 
     while (!signal.aborted) {
       const elapsedMs = Date.now() - startedAt;
+
+      // Global timeout
       if (elapsedMs >= timeoutMs) {
-        const timeoutResult = this.buildResult(status, elapsedMs, true);
-        this.sendProgress(key, timeoutResult, true);
-        return timeoutResult;
+        const result = this.buildResult(lastDetection, agents, agentTimedOutSet, elapsedMs, true);
+        this.sendProgress(key, result, true);
+        return result;
       }
 
+      // Poll completion status
       try {
-        status = await fetchAgentStatusForAgents(owner, repo, pr, agents, since, params.octokit);
+        lastDetection = await fetchCompletionStatus(
+          owner, repo, pr, agents, since, params.octokit,
+        );
         pollIntervalMs = params.pollIntervalMs;
         rateLimitRetries = 0;
       } catch (error: unknown) {
@@ -109,7 +126,7 @@ export class ReviewMonitor {
           pollIntervalMs = Math.min(pollIntervalMs * 2, MAX_POLL_INTERVAL_MS);
           this.log('warning',
             `[review-monitor] ${key}: GitHub API rate limit (attempt ${rateLimitRetries}). ` +
-            `Backing off to ${Math.round(pollIntervalMs / 1000)}s.`
+            `Backing off to ${Math.round(pollIntervalMs / 1000)}s.`,
           );
         } else {
           const message = error instanceof Error ? error.message : String(error);
@@ -120,37 +137,85 @@ export class ReviewMonitor {
         continue;
       }
 
-      const result = this.buildResult(status, elapsedMs, false);
+      // Check per-agent timeouts
+      for (const agentId of agents) {
+        if (agentTimedOutSet.has(agentId)) continue;
+        const agentResult = lastDetection.agents.find(a => a.agentId === agentId);
+        if (agentResult?.ready) continue;
+
+        const config = INVOKABLE_AGENTS[agentId];
+        if (config && elapsedMs >= config.completionStrategy.maxWaitMs) {
+          agentTimedOutSet.add(agentId);
+          this.log('warning',
+            `[review-monitor] ${key}: ${config.name} exceeded maxWaitMs ` +
+            `(${Math.round(config.completionStrategy.maxWaitMs / 1000)}s). Marking as timed out.`,
+          );
+        }
+      }
+
+      // Build result and check if we can exit
+      const result = this.buildResult(lastDetection, agents, agentTimedOutSet, elapsedMs, false);
       this.sendProgress(key, result, false);
 
-      if (result.completed) {
+      // Exit if all agents are either ready or individually timed out
+      const allSettled = result.agents.every(a => a.ready || a.agentTimedOut);
+      if (allSettled) {
+        this.sendProgress(key, result, true);
         return result;
       }
 
       await this.sleep(pollIntervalMs, signal);
     }
 
-    const canceledResult = this.buildResult(status, Date.now() - startedAt, false);
+    // Cancelled
+    const canceledResult = this.buildResult(
+      lastDetection, agents, agentTimedOutSet, Date.now() - startedAt, false,
+    );
     this.sendProgress(key, canceledResult, true);
     return canceledResult;
   }
 
   private buildResult(
-    status: { allAgentsReady: boolean; agents: AgentStatus[] },
+    detection: CompletionDetectionResult | null,
+    agents: InvokableAgentId[],
+    agentTimedOutSet: Set<InvokableAgentId>,
     elapsedMs: number,
-    timedOut: boolean,
+    globalTimedOut: boolean,
   ): AwaitResult {
-    const ready = status.agents.filter(agent => agent.ready).length;
-    const total = status.agents.length;
+    const agentStatuses: AgentAwaitStatus[] = agents.map(agentId => {
+      const detected = detection?.agents.find(a => a.agentId === agentId);
+      const config = INVOKABLE_AGENTS[agentId];
+      const isAgentTimedOut = agentTimedOutSet.has(agentId);
+
+      return {
+        agentId,
+        name: detected?.name ?? config?.name ?? agentId,
+        ready: detected?.ready ?? false,
+        agentTimedOut: isAgentTimedOut,
+        confidence: detected?.confidence,
+        source: detected?.source,
+        lastActivity: detected?.lastActivity,
+        detail: detected?.detail ?? (isAgentTimedOut ? 'Exceeded per-agent timeout' : undefined),
+      };
+    });
+
+    const ready = agentStatuses.filter(a => a.ready).length;
+    const agentTimedOut = agentStatuses.filter(a => a.agentTimedOut && !a.ready).length;
+    const pending = agentStatuses.filter(a => !a.ready && !a.agentTimedOut).length;
+    const total = agentStatuses.length;
+    const allReady = ready === total;
+    const someReady = ready > 0 && !allReady;
 
     return {
-      completed: !timedOut && status.allAgentsReady,
-      timedOut,
+      completed: allReady,
+      timedOut: globalTimedOut,
+      partial: someReady && (globalTimedOut || agentTimedOut > 0),
       elapsedMs,
-      agents: status.agents,
+      agents: agentStatuses,
       summary: {
         ready,
-        pending: total - ready,
+        pending,
+        agentTimedOut,
         total,
       },
     };
@@ -164,41 +229,36 @@ export class ReviewMonitor {
     const state = isFinal
       ? result.timedOut
         ? `timeout after ${Math.round(result.elapsedMs / 1000)}s`
-        : `finished after ${Math.round(result.elapsedMs / 1000)}s`
+        : result.completed
+          ? `completed after ${Math.round(result.elapsedMs / 1000)}s`
+          : `settled after ${Math.round(result.elapsedMs / 1000)}s`
       : `polling... ${Math.round(result.elapsedMs / 1000)}s elapsed`;
 
-    const ready = result.agents
-      .filter(agent => agent.ready)
-      .map(agent => agent.name)
+    const readyNames = result.agents
+      .filter(a => a.ready)
+      .map(a => `${a.name}(${a.confidence ?? '?'})`)
       .join(', ') || 'none';
-    const pending = result.agents
-      .filter(agent => !agent.ready)
-      .map(agent => agent.name)
+    const pendingNames = result.agents
+      .filter(a => !a.ready && !a.agentTimedOut)
+      .map(a => a.name)
       .join(', ') || 'none';
+    const timedOutNames = result.agents
+      .filter(a => a.agentTimedOut && !a.ready)
+      .map(a => a.name)
+      .join(', ');
 
-    this.log('info',
-      `[review-monitor] ${key} ${state}. ` +
-      `Ready: ${result.summary.ready}/${result.summary.total} (${ready}); ` +
-      `Pending: ${result.summary.pending} (${pending})`
-    );
-  }
+    let msg = `[review-monitor] ${key} ${state}. ` +
+      `Ready: ${result.summary.ready}/${result.summary.total} (${readyNames}); ` +
+      `Pending: ${result.summary.pending} (${pendingNames})`;
 
-  private createFallbackStatus(agents: InvokableAgentId[]) {
-    const fallbackAgents: AgentStatus[] = agents.map(agentId => ({
-      agentId,
-      name: agentId,
-      ready: false,
-    }));
+    if (timedOutNames) {
+      msg += `; Agent-timed-out: ${result.summary.agentTimedOut} (${timedOutNames})`;
+    }
 
-    return {
-      allAgentsReady: false,
-      agents: fallbackAgents,
-    };
+    this.log('info', msg);
   }
 
   private isThrottlingError(error: unknown): boolean {
-    // 429 is always rate limit. 403 is rate limit ONLY if message contains
-    // "rate limit" or "abuse detection" — otherwise it's an auth/permission error.
     const status = this.getErrorStatus(error);
     if (status === 429) return true;
     if (status === 403) {
@@ -209,7 +269,6 @@ export class ReviewMonitor {
   }
 
   private getErrorStatus(error: unknown): number | null {
-    // Check Octokit-style error.status / error.response.status
     const errObj = error as { status?: unknown; response?: { status?: unknown } } | null;
     if (errObj && typeof errObj.status === 'number') return errObj.status;
     if (errObj?.response && typeof errObj.response.status === 'number') return errObj.response.status;

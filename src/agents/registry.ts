@@ -12,6 +12,27 @@ import { logger } from '../logging.js';
 // Types
 // ============================================================================
 
+/** Source types for completion detection */
+export type CompletionSource = 'reviews' | 'issue_comments' | 'check_runs';
+
+/** Per-agent strategy for detecting review completion */
+export interface CompletionStrategy {
+  /** Primary signal sources to check (in priority order) */
+  sources: CompletionSource[];
+  /** Body pattern that confirms completion (regex) */
+  bodyPattern?: RegExp;
+  /** Patterns that indicate NOT complete (placeholders, errors, rate limits) */
+  excludePatterns?: RegExp[];
+  /** Whether to filter reviews by state !== PENDING */
+  filterPendingReviews: boolean;
+  /** Expected completion time in ms (for logging/monitoring) */
+  expectedTimeMs: number;
+  /** Max time before declaring agent "likely not responding" */
+  maxWaitMs: number;
+  /** GitHub App slugs for check run detection */
+  checkRunAppSlugs?: string[];
+}
+
 export interface AgentConfig {
   /** Human-readable agent name */
   name: string;
@@ -25,6 +46,8 @@ export interface AgentConfig {
   msysWorkaround?: boolean;
   /** Author login pattern for detection */
   authorPattern: string | string[];
+  /** How to detect that this agent has completed its review */
+  completionStrategy: CompletionStrategy;
 }
 
 export type InvokableAgentId = 'coderabbit' | 'sourcery' | 'qodo' | 'gemini' | 'codex' | 'copilot' | 'greptile';
@@ -44,6 +67,14 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: ['focus', 'files', 'incremental'],
     authorPattern: 'coderabbitai',
+    completionStrategy: {
+      sources: ['check_runs', 'reviews'],
+      bodyPattern: /^\*\*Actionable comments posted: \d+\*\*/,
+      filterPendingReviews: true,
+      expectedTimeMs: 300_000,   // 5 min
+      maxWaitMs: 720_000,        // 12 min
+      checkRunAppSlugs: ['coderabbitai', 'coderabbit'],
+    },
   },
   sourcery: {
     name: 'Sourcery',
@@ -51,6 +82,15 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: ['focus'],
     authorPattern: ['sourcery-ai', 'sourcery-ai-experiments'],
+    completionStrategy: {
+      sources: ['reviews'],
+      bodyPattern: /^Hey - I've found \d+ issues?/,
+      excludePatterns: [/rate limit/i, /review limit/i],
+      filterPendingReviews: true,
+      expectedTimeMs: 120_000,   // 2 min
+      maxWaitMs: 300_000,        // 5 min
+      checkRunAppSlugs: ['sourcery-ai', 'sourcery'],
+    },
   },
   qodo: {
     name: 'Qodo',
@@ -58,7 +98,14 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'slash',
     supports: ['files'],
     msysWorkaround: true,
-    authorPattern: 'qodo-code-review[bot]',
+    authorPattern: ['qodo-code-review', 'qodo-code-review[bot]'],
+    completionStrategy: {
+      sources: ['issue_comments'],
+      bodyPattern: /(?:<h3>Code Review by Qodo<\/h3>|## PR Reviewer Guide)/,
+      filterPendingReviews: false,
+      expectedTimeMs: 360_000,   // 6 min
+      maxWaitMs: 600_000,        // 10 min
+    },
   },
   gemini: {
     name: 'Gemini',
@@ -66,6 +113,15 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: ['focus'],
     authorPattern: 'gemini-code-assist',
+    completionStrategy: {
+      sources: ['reviews'],
+      bodyPattern: /^## Code Review\n/,
+      excludePatterns: [/I'm currently reviewing/i, /will post my feedback shortly/i],
+      filterPendingReviews: true,
+      expectedTimeMs: 240_000,   // 4 min
+      maxWaitMs: 600_000,        // 10 min
+      checkRunAppSlugs: ['gemini-code-assist'],
+    },
   },
   codex: {
     name: 'Codex',
@@ -73,6 +129,14 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: [],
     authorPattern: 'chatgpt-codex-connector',
+    completionStrategy: {
+      sources: ['reviews'],
+      bodyPattern: /^### 💡 Codex Review/,
+      excludePatterns: [/create a Codex account/i, /create an environment/i],
+      filterPendingReviews: true,
+      expectedTimeMs: 300_000,   // 5 min
+      maxWaitMs: 600_000,        // 10 min
+    },
   },
   copilot: {
     name: 'Copilot',
@@ -80,6 +144,13 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: [],
     authorPattern: 'copilot-pull-request-reviewer',
+    completionStrategy: {
+      sources: ['reviews'],
+      bodyPattern: /^## Pull request overview\n/,
+      filterPendingReviews: true,
+      expectedTimeMs: 30_000,    // 30 sec
+      maxWaitMs: 1_800_000,      // 30 min (can be slow)
+    },
   },
   greptile: {
     name: 'Greptile',
@@ -87,6 +158,15 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     type: 'mention',
     supports: ['focus'],
     authorPattern: 'greptile-apps',
+    completionStrategy: {
+      sources: ['reviews', 'issue_comments'],
+      bodyPattern: /(?:<sub>\d+ files reviewed|<h2>Greptile Overview<\/h2>)/,
+      excludePatterns: [/free trial has ended/i],
+      filterPendingReviews: true,
+      expectedTimeMs: 300_000,   // 5 min
+      maxWaitMs: 600_000,        // 10 min
+      checkRunAppSlugs: ['greptile'],
+    },
   },
 };
 

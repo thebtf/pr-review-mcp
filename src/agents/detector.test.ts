@@ -15,8 +15,8 @@ describe('matchesAuthorPattern', () => {
       expect(matchesAuthorPattern('coderabbitai[bot]', 'coderabbitai')).toBe(true);
     });
 
-    it('matches pattern prefix', () => {
-      expect(matchesAuthorPattern('coderabbitai-something', 'coderabbitai')).toBe(true);
+    it('does not match partial prefix (exact match only)', () => {
+      expect(matchesAuthorPattern('coderabbitai-something', 'coderabbitai')).toBe(false);
     });
 
     it('is case insensitive', () => {
