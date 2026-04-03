@@ -92,8 +92,24 @@ You'll be notified when it finishes. Update tasks and report results to the user
 - **Agent already reviewed**: smart detection skips agents that already posted reviews (use `force` in `pr_invoke` options to override)
 - **All comments resolved, no unresolved**: skips worker spawning, goes straight to build/test
 
+## Comment Processing Rules (MANDATORY)
+
+**ALL severities MUST be processed. Skipping = FAILURE:**
+- CRIT and MAJOR — fix immediately
+- MINOR — you MUST fix. "Too minor" is NOT a valid reason to skip.
+- NITPICK — you MUST fix. Code quality at every level is required.
+
+**You MUST confidence-check EVERY suggestion BEFORE applying it:**
+AI review agents produce WRONG suggestions. Blindly applying them breaks code.
+1. READ the suggestion. VERIFY it is factually correct.
+2. If CORRECT → apply the fix, resolve the thread.
+3. If WRONG → resolve the thread with a reply explaining WHY it is incorrect.
+4. BLINDLY APPLYING a wrong suggestion = FAILURE. SKIPPING a correct one = FAILURE.
+
 ## What NOT to Do
 
 - Don't call `pr_list`, `pr_get`, `pr_resolve`, `Read`, `Edit` yourself — that's the workers' job
 - Don't process comments directly — spawn workers via the orchestrator
 - Don't call `pr_merge` — review completes, human merges
+- NEVER skip MINOR/NITPICK comments — you MUST process ALL severities
+- NEVER blindly apply a suggestion — you MUST verify it is correct first
