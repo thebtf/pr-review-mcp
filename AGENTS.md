@@ -2,7 +2,7 @@
 
 ## PURPOSE
 
-MCP server for orchestrating AI-driven PR reviews with 7 agent sources, 19 tools, and parallel multi-agent coordination.
+MCP server for orchestrating AI-driven PR reviews with 7 agent sources, 20 tools, and parallel multi-agent coordination.
 
 **Features:**
 - GraphQL-based GitHub integration with cursor pagination
@@ -56,9 +56,12 @@ pr-review-mcp/
 │   │   ├── create.ts          # pr_create
 │   │   ├── merge.ts           # pr_merge
 │   │   ├── coordination.ts    # pr_claim_work, pr_report_progress, etc.
+│   │   ├── sessions.ts        # pr_sessions
 │   │   └── shared.ts          # Shared utilities
-│   ├── monitors/
-│   │   └── review-monitor.ts  # ReviewMonitor (server-side polling)
+│   ├── persistence/
+│   │   ├── database.ts        # SQLite database init (openDatabase)
+│   │   ├── invocation-store.ts # InvocationStore (CRUD + gc + reap)
+│   │   └── types.ts           # StoredInvocation, StoredAgentStatus
 │   ├── adapters/
 │   │   ├── qodo.ts            # Qodo issue comment adapter
 │   │   └── greptile.ts        # Greptile issue comment adapter
@@ -78,7 +81,8 @@ pr-review-mcp/
 │   ├── resources/
 │   │   └── pr.ts              # PR resource (pr://{owner}/{repo}/{pr})
 │   └── coordination/
-│       ├── state.ts           # Coordination state management
+│       ├── state.ts           # In-memory coordination state (CoordinationStateManager)
+│       ├── sqlite-state.ts    # SQLite-backed coordination state
 │       └── types.ts           # Coordination types
 ├── skills/
 │   └── review/
@@ -91,7 +95,7 @@ pr-review-mcp/
 
 ---
 
-## MCP TOOLS (19)
+## MCP TOOLS (20)
 
 ### Analysis
 
@@ -103,7 +107,7 @@ pr-review-mcp/
 | `pr_get` | Full comment details including body and AI prompt |
 | `pr_changes` | Incremental updates since cursor |
 | `pr_poll_updates` | Poll for new comments, commits, check status, agent completion |
-| `pr_await_reviews` | **Non-blocking** single poll of agent completion status. Returns immediately with `retryAfterMs` hint. Use in a loop after `pr_invoke`. |
+| `pr_await_reviews` | Non-blocking: checks agent completion once and returns immediately. Pass `since` from `pr_invoke`. Returns `retryAfterMs` hint while agents are pending; call again after that delay. |
 
 ### Action
 
@@ -126,6 +130,7 @@ pr-review-mcp/
 | `pr_reset_coordination` | Reset coordination state (with confirmation) |
 | `pr_progress_update` | Report orchestrator phase transition |
 | `pr_progress_check` | Read orchestrator phase history and run progress |
+| `pr_sessions` | List active and recent review invocations across sessions. Useful for recovery after crash/compaction. |
 
 ---
 
@@ -213,8 +218,8 @@ The server declares `x-mux: { sharing: "session-aware" }` for mcp-mux v0.6.0+.
 - Token resolved from: `muxEnv.GITHUB_PERSONAL_ACCESS_TOKEN` → `process.env` fallback
 - Stale sessions cleaned up after 30 minutes of inactivity
 
-**Per-session state:** Octokit, GraphQL client, GitHubClient (with CircuitBreaker), CoordinationStateManager
-**Shared state:** ReviewMonitor (keyed by PR), MCP logger
+**Per-session state:** Octokit, GraphQL client, GitHubClient (with CircuitBreaker), CoordinationStateManager, InvocationStore
+**Shared state:** MCP logger, SQLite database (single file, shared across sessions)
 
 **Stdio fallback:** Without mcp-mux, uses `"default"` session with `process.env` token.
 
