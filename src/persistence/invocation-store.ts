@@ -191,8 +191,15 @@ export class InvocationStore {
   /**
    * Upsert agent completion results and update the parent invocation status
    * if all agents have settled.
+   *
+   * Accepts either plain `AgentCompletionResult` objects (from the completion detector)
+   * or augmented objects that include the `timedOut` flag (from `pr_await_reviews`, which
+   * computes per-agent timeouts based on elapsed wall-clock time).
    */
-  updateAgentStatus(invocationId: number, agents: AgentCompletionResult[]): void {
+  updateAgentStatus(
+    invocationId: number,
+    agents: (AgentCompletionResult & { timedOut?: boolean })[],
+  ): void {
     const now = new Date().toISOString();
 
     const upsertAgent = this.db.prepare(`
@@ -219,7 +226,7 @@ export class InvocationStore {
           confidence: agent.confidence ?? null,
           source: agent.source ?? null,
           lastActivity: agent.lastActivity ?? null,
-          timedOut: 0,
+          timedOut: (agent.timedOut ?? false) ? 1 : 0,
           detail: agent.detail ?? null,
           checkedAt: now,
         });

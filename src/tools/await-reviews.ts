@@ -12,8 +12,9 @@
 import { z } from 'zod';
 import type { Octokit } from '@octokit/rest';
 import { getDefaultAgents, isInvokableAgent, INVOKABLE_AGENTS, type InvokableAgentId } from '../agents/registry.js';
-import { fetchCompletionStatus, type AgentCompletionResult } from '../agents/completion-detector.js';
+import { fetchCompletionStatus } from '../agents/completion-detector.js';
 import { getOctokit } from '../github/octokit.js';
+import type { InvocationStore } from '../persistence/invocation-store.js';
 
 // ============================================================================
 // Input/Output Schemas
@@ -24,7 +25,10 @@ export const AwaitInputSchema = z.object({
   repo: z.string().min(1),
   pr: z.number().int().positive(),
   agents: z.array(z.string()).optional(),
-  since: z.string().datetime(),
+  /** ISO 8601 timestamp from pr_invoke response. Optional if an active invocation exists in the store. */
+  since: z.string().datetime().optional(),
+  /** If true, bypass cached agent status and always poll GitHub. Default: false. */
+  force: z.boolean().optional().default(false),
 });
 
 export type AwaitInput = z.infer<typeof AwaitInputSchema>;
@@ -57,6 +61,8 @@ export interface AwaitResult {
   };
   /** Hint for client: suggested delay before next poll (ms) */
   retryAfterMs: number | null;
+  /** Set when the call cannot proceed (e.g., no active invocation found) */
+  error?: string;
 }
 
 // ============================================================================
@@ -66,20 +72,50 @@ export interface AwaitResult {
 /**
  * Non-blocking single poll: check agent completion status and return immediately.
  * The client decides whether/when to call again.
+ *
+ * `since` and `agents` are optional when an InvocationStore is provided — the store
+ * is queried for the most recent active invocation for the PR and its values are used
+ * as defaults.
  */
 export async function prAwaitReviews(
   input: AwaitInput,
   octokit?: Octokit,
+  invocationStore?: InvocationStore,
+  invocationId?: number,
 ): Promise<AwaitResult> {
   const validated = AwaitInputSchema.parse(input);
-  const { owner, repo, pr, since } = validated;
+  const { owner, repo, pr, force } = validated;
 
-  // Resolve agents
+  // Resolve since / agents — explicit values take priority; fall back to active invocation.
+  let since = validated.since;
+  let agentIds: string[] | undefined = validated.agents;
+
+  if ((!since || !agentIds?.length) && invocationStore) {
+    const active = invocationStore.findActiveForPR(owner, repo, pr);
+    if (active) {
+      since = since ?? active.since;
+      agentIds = agentIds?.length ? agentIds : active.agents.filter(isInvokableAgent);
+      // Bind to the discovered invocation id (unless caller already supplied one).
+      invocationId = invocationId ?? active.id;
+    }
+  }
+
+  if (!since) {
+    return {
+      completed: false,
+      partial: false,
+      elapsedMs: 0,
+      agents: [],
+      summary: { ready: 0, pending: 0, agentTimedOut: 0, total: 0 },
+      retryAfterMs: null,
+      error: 'No active invocation found for this PR. Call pr_invoke first, or supply a `since` timestamp.',
+    };
+  }
+
+  // Resolve final agent list
   let agents: InvokableAgentId[];
-  if (validated.agents && validated.agents.length > 0) {
-    agents = validated.agents.filter(
-      (id): id is InvokableAgentId => isInvokableAgent(id),
-    );
+  if (agentIds && agentIds.length > 0) {
+    agents = agentIds.filter((id): id is InvokableAgentId => isInvokableAgent(id));
     if (agents.length === 0) {
       agents = getDefaultAgents();
     }
@@ -99,6 +135,8 @@ export async function prAwaitReviews(
   }
 
   // Single poll — no loop, no blocking
+  // `force` is reserved for future cache-skip behaviour; currently we always poll GitHub.
+  void force;
   const detection = await fetchCompletionStatus(owner, repo, pr, agents, since, ok, headSha);
   const elapsedMs = Date.now() - new Date(since).getTime();
 
@@ -128,6 +166,39 @@ export async function prAwaitReviews(
   const allReady = ready === total;
   const allSettled = agentStatuses.every(a => a.ready || a.agentTimedOut);
   const someReady = ready > 0 && !allReady;
+
+  // Persist agent status to SQLite so pr_sessions can reflect current state.
+  if (invocationStore && invocationId !== undefined) {
+    try {
+      // Augment the typed detection results with the per-agent timedOut flag we computed
+      // above (the detector itself doesn't know elapsed wall-clock time).
+      const timedOutSet = new Set(
+        agentStatuses.filter(s => s.agentTimedOut).map(s => s.agentId),
+      );
+      const resultsWithTimeout = detection.agents.map(r => ({
+        ...r,
+        timedOut: timedOutSet.has(r.agentId),
+      }));
+      // Also add any agents that timed out before the detector even saw them.
+      for (const s of agentStatuses) {
+        if (s.agentTimedOut && !detection.agents.find(r => r.agentId === s.agentId)) {
+          resultsWithTimeout.push({
+            agentId: s.agentId,
+            name: s.name,
+            ready: false,
+            confidence: 'low',
+            source: undefined,
+            lastActivity: undefined,
+            detail: s.detail,
+            timedOut: true,
+          });
+        }
+      }
+      invocationStore.updateAgentStatus(invocationId, resultsWithTimeout);
+    } catch {
+      // Non-fatal — polling result is still returned to the caller.
+    }
+  }
 
   // Suggest retry delay: null if all settled (no more polling needed)
   let retryAfterMs: number | null = null;

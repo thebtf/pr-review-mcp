@@ -298,7 +298,7 @@ export class PRReviewMCPServer {
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
       try {
-        const result = await prAwaitReviews(args as AwaitInput, ctx.octokit);
+        const result = await prAwaitReviews(args as AwaitInput, ctx.octokit, ctx.invocationStore ?? undefined);
         if (result.completed) {
           this.mcpServer.server.sendResourceUpdated({ uri: `pr://${args.owner}/${args.repo}/${args.pr}` });
         }
