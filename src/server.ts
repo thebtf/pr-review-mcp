@@ -40,6 +40,7 @@ import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
 import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
+import { prSessions, SessionsInputSchema } from './tools/sessions.js';
 import {
   prClaimWork,
   prReportProgress,
@@ -74,6 +75,10 @@ import {
 // Session
 import { MuxSessionManager } from './session/manager.js';
 
+// Persistence
+import { openDatabase } from './persistence/database.js';
+import { InvocationStore } from './persistence/invocation-store.js';
+
 // Resources
 import { readPRResource } from './resources/pr.js';
 
@@ -107,6 +112,16 @@ export class PRReviewMCPServer {
 
     this.githubClient = new GitHubClient();
     this.sessionManager = new MuxSessionManager();
+
+    // Wire SQLite persistence into session manager
+    const db = openDatabase();
+    this.sessionManager.setDatabase(db);
+    if (db) {
+      const gcStore = new InvocationStore(db);
+      gcStore.gc(); // Purge expired records on startup
+      setInterval(() => gcStore.gc(), 60 * 60 * 1000).unref(); // Every 60 minutes
+    }
+
     logger.initialize(this.mcpServer.server);
 
     this.registerTools();
@@ -311,7 +326,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.textResult(await prInvoke(args, ctx.octokit)); }
+      try { return PRReviewMCPServer.textResult(await prInvoke(args, ctx.octokit, ctx.invocationStore, ctx.sessionId)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -449,6 +464,17 @@ export class PRReviewMCPServer {
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
       try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args, ctx.coordination)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_sessions', {
+      title: 'List Review Sessions',
+      description: 'List active and recent review invocations across sessions. Shows which agents were invoked, their completion status, and elapsed time. Useful for recovery after crash/compaction.',
+      inputSchema: SessionsInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(prSessions(args, ctx.invocationStore)); }
       catch (e) { throw toMcpError(e); }
     });
 

@@ -7,13 +7,18 @@
 import { createOctokitForToken, createGraphQLForToken } from '../github/octokit.js';
 import { GitHubClient } from '../github/client.js';
 import { CoordinationStateManager } from '../coordination/state.js';
+import { InvocationStore } from '../persistence/invocation-store.js';
 import type { MuxSessionContext } from './types.js';
 
 /**
  * Create a new MuxSessionContext for a given session ID and GitHub token.
  * Instantiates per-session Octokit, GraphQL, GitHubClient, and CoordinationStateManager.
  */
-export function createSessionContext(sessionId: string, token: string): MuxSessionContext {
+export function createSessionContext(
+  sessionId: string,
+  token: string,
+  db: import('better-sqlite3').Database | null = null,
+): MuxSessionContext {
   const octokit = createOctokitForToken(token);
   const graphql = createGraphQLForToken(token);
   const githubClient = new GitHubClient(graphql);
@@ -26,6 +31,8 @@ export function createSessionContext(sessionId: string, token: string): MuxSessi
     githubClient,
     coordination,
     token,
+    db,
+    invocationStore: db ? new InvocationStore(db) : null,
     lastActivity: Date.now(),
   };
 }

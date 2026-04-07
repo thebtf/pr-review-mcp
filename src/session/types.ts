@@ -8,8 +8,10 @@
 
 import type { Octokit } from '@octokit/rest';
 import type { graphql } from '@octokit/graphql';
+import type Database from 'better-sqlite3';
 import type { GitHubClient } from '../github/client.js';
 import type { CoordinationStateManager } from '../coordination/state.js';
+import type { InvocationStore } from '../persistence/invocation-store.js';
 
 /**
  * Extracted metadata from _meta injected by mcp-mux for session-aware servers.
@@ -34,6 +36,10 @@ export interface MuxSessionContext {
   readonly coordination: CoordinationStateManager;
   /** The GitHub token this context was created with */
   readonly token: string;
+  /** SQLite database instance (null if unavailable) */
+  readonly db: Database.Database | null;
+  /** Invocation tracking store (null if DB unavailable) */
+  readonly invocationStore: InvocationStore | null;
   /** Timestamp of last access (for TTL cleanup) */
   lastActivity: number;
 }
