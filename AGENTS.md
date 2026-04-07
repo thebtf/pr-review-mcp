@@ -103,7 +103,7 @@ pr-review-mcp/
 | `pr_get` | Full comment details including body and AI prompt |
 | `pr_changes` | Incremental updates since cursor |
 | `pr_poll_updates` | Poll for new comments, commits, check status, agent completion |
-| `pr_await_reviews` | **Block server-side** until invoked agents post reviews (up to 10 min timeout). Use after `pr_invoke`. |
+| `pr_await_reviews` | **Non-blocking** single poll of agent completion status. Returns immediately with `retryAfterMs` hint. Use in a loop after `pr_invoke`. |
 
 ### Action
 

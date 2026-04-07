@@ -75,7 +75,7 @@ You'll be notified when it finishes. Update tasks and report results to the user
 | Tool | Purpose |
 |------|---------|
 | `pr_invoke` | Trigger AI review agents, get `since` + `invokedAgentIds` |
-| `pr_await_reviews` | Block server-side until agents post reviews (up to 10 min) |
+| `pr_await_reviews` | Non-blocking: check agent completion once, return immediately with `retryAfterMs` hint |
 | `pr_summary` | Get review statistics |
 | `pr_claim_work` | Claim file partition for comment processing |
 | `pr_get` | Read full comment details |
