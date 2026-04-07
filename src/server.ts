@@ -40,7 +40,7 @@ import { prReviewers, ReviewersInputSchema } from './tools/reviewers.js';
 import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
 import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
-import { ReviewMonitor } from './monitors/review-monitor.js';
+import { prSessions, SessionsInputSchema } from './tools/sessions.js';
 import {
   prClaimWork,
   prReportProgress,
@@ -75,6 +75,10 @@ import {
 // Session
 import { MuxSessionManager } from './session/manager.js';
 
+// Persistence
+import { openDatabase } from './persistence/database.js';
+import { InvocationStore } from './persistence/invocation-store.js';
+
 // Resources
 import { readPRResource } from './resources/pr.js';
 
@@ -90,7 +94,6 @@ export class PRReviewMCPServer {
   private mcpServer: McpServer;
   private githubClient: GitHubClient;
   private httpServer?: import('node:http').Server;
-  private reviewMonitor: ReviewMonitor;
   private sessionManager: MuxSessionManager;
 
   constructor() {
@@ -108,8 +111,17 @@ export class PRReviewMCPServer {
     );
 
     this.githubClient = new GitHubClient();
-    this.reviewMonitor = new ReviewMonitor(this.mcpServer.server);
     this.sessionManager = new MuxSessionManager();
+
+    // Wire SQLite persistence into session manager
+    const db = openDatabase();
+    this.sessionManager.setDatabase(db);
+    if (db) {
+      const gcStore = new InvocationStore(db);
+      gcStore.gc(); // Purge expired records on startup
+      setInterval(() => gcStore.gc(), 60 * 60 * 1000).unref(); // Every 60 minutes
+    }
+
     logger.initialize(this.mcpServer.server);
 
     this.registerTools();
@@ -269,7 +281,7 @@ export class PRReviewMCPServer {
 
     this.mcpServer.registerTool('pr_poll_updates', {
       title: 'Poll for Review Updates',
-      description: 'Poll for new review updates since a timestamp (comments, commits, status). For waiting on agent reviews, prefer pr_await_reviews which blocks server-side.',
+      description: 'Poll for new review updates since a timestamp (comments, commits, status, agents). Use include=["agents"] for agent completion status.',
       inputSchema: PollInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, extra) => {
@@ -279,14 +291,14 @@ export class PRReviewMCPServer {
     });
 
     this.mcpServer.registerTool('pr_await_reviews', {
-      title: 'Await Review Completion',
-      description: 'Block until all invoked AI review agents have posted their reviews, or timeout. Use after pr_invoke — pass the `since` field from its response. Progress is logged via MCP notifications.',
+      title: 'Check Agent Review Completion',
+      description: 'Non-blocking: checks agent review completion status once and returns immediately. Use after pr_invoke — pass the `since` field. Returns retryAfterMs hint if agents are still pending (call again after that delay). Per-agent timeouts via maxWaitMs mark agents that likely won\'t respond.',
       inputSchema: AwaitInputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
       try {
-        const result = await prAwaitReviews({ ...args, octokit: ctx.octokit } as AwaitInput, this.reviewMonitor);
+        const result = await prAwaitReviews(args as AwaitInput, ctx.octokit, ctx.invocationStore ?? undefined);
         if (result.completed) {
           this.mcpServer.server.sendResourceUpdated({ uri: `pr://${args.owner}/${args.repo}/${args.pr}` });
         }
@@ -314,7 +326,7 @@ export class PRReviewMCPServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
-      try { return PRReviewMCPServer.textResult(await prInvoke(args, ctx.octokit)); }
+      try { return PRReviewMCPServer.textResult(await prInvoke(args, ctx.octokit, ctx.invocationStore, ctx.sessionId)); }
       catch (e) { throw toMcpError(e); }
     });
 
@@ -452,6 +464,17 @@ export class PRReviewMCPServer {
     }, async (args, extra) => {
       const ctx = this.sessionManager.getContext(extra);
       try { return PRReviewMCPServer.structuredResult(await prProgressCheck(args, ctx.coordination)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
+    this.mcpServer.registerTool('pr_sessions', {
+      title: 'List Review Sessions',
+      description: 'List active and recent review invocations across sessions. Shows which agents were invoked, their completion status, and elapsed time. Useful for recovery after crash/compaction.',
+      inputSchema: SessionsInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      try { return PRReviewMCPServer.structuredResult(prSessions(args, ctx.invocationStore)); }
       catch (e) { throw toMcpError(e); }
     });
 

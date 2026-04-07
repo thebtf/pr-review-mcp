@@ -322,26 +322,32 @@ result = pr_invoke { owner, repo, pr, agent: "all" }
 \`\`\`
 - Save \`result.since\` and \`result.invokedAgentIds\` — pass both to pr_await_reviews in Step 5
 
-### Step 5: AWAIT REVIEWS
+### Step 5: POLL FOR REVIEWS (non-blocking loop)
 \`\`\`
 pr_progress_update { phase: "poll_wait" }
-pr_await_reviews { owner, repo, pr, agents: <result.invokedAgentIds>, since: <result.since> }
 \`\`\`
-- Blocks server-side until all agents post reviews (up to 10 min timeout)
-- Progress logged automatically via MCP notifications
-- On completion or timeout → get summary:
+
+**IMPORTANT: pr_await_reviews is NON-BLOCKING.** Each call checks once and returns immediately.
+You MUST poll in a loop:
+
+\`\`\`
+loop (max 20 iterations):
+  status = pr_await_reviews { owner, repo, pr, agents: <result.invokedAgentIds>, since: <result.since> }
+
+  if status.completed → all agents done → break
+  if status.retryAfterMs === null → all agents settled (ready or timed out) → break
+  if status.partial → some done, some timed out → break (proceed with what we have)
+
+  // Wait before next poll (use the hint from retryAfterMs, typically 15-30s)
+  sleep(status.retryAfterMs)  // or use Bash("sleep 15") / similar delay
+\`\`\`
+
+After loop exits → get summary:
 \`\`\`
 pr_summary { owner, repo, pr }
 \`\`\`
 - \`unresolved > 0\` → Step 6
 - \`unresolved === 0\` → Step 8
-
-**Fallback:** If pr_await_reviews is unavailable, poll manually:
-\`\`\`
-pr_poll_updates { owner, repo, pr, since: <result.since>, include: ["comments", "agents"] }
-\`\`\`
-- \`allAgentsReady: false\` → wait 30s, poll again
-- \`allAgentsReady: true\` → continue
 
 ### Step 6: SPAWN WORKERS (PARALLEL)
 \`\`\`

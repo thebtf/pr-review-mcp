@@ -25,7 +25,7 @@ import {
   outsideDiffToProcessedComment
 } from '../extractors/coderabbit-nitpicks.js';
 import { detectMultiIssue, splitMultiIssue } from '../extractors/multi-issue.js';
-import type { CoordinationStateManager } from '../coordination/state.js';
+import type { ICoordinationStateManager } from '../coordination/types.js';
 import { loadState } from '../github/state-comment.js';
 
 /**
@@ -64,7 +64,7 @@ async function fetchCodeRabbitNitpicks(
   owner: string,
   repo: string,
   pr: number,
-  coordination?: CoordinationStateManager
+  coordination?: ICoordinationStateManager
 ): Promise<ProcessedComment[]> {
   try {
     const data = await client.graphql<ListReviewsData>(QUERIES.listReviews, {
@@ -221,7 +221,7 @@ export async function fetchAllThreads(
   repo: string,
   pr: number,
   options: FetchOptions = {},
-  coordination?: CoordinationStateManager
+  coordination?: ICoordinationStateManager
 ): Promise<FetchResult> {
   const { filter = {}, maxItems = 100, startCursor = null } = options;
   const comments: ProcessedComment[] = [];

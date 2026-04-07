@@ -8,7 +8,7 @@ import { QUERIES } from '../github/queries.js';
 import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview } from '../adapters/qodo.js';
 import { toggleQodoIssue } from '../adapters/qodo-tracker.js';
-import type { CoordinationStateManager } from '../coordination/state.js';
+import type { ICoordinationStateManager } from '../coordination/types.js';
 import { addResolvedReaction, addReactionToNode } from '../github/state-comment.js';
 import { logger } from '../logging.js';
 import type { ResolveInput, ResolveOutput, ResolveThreadData } from '../github/types.js';
@@ -27,7 +27,7 @@ export const ResolveInputSchema = z.object({
 export async function prResolveWithContext(
   input: ResolveInput & { pr: number },
   client: GitHubClient,
-  coordination?: CoordinationStateManager
+  coordination?: ICoordinationStateManager
 ): Promise<ResolveOutput> {
   const { owner, repo, pr } = input;
   let { threadId } = input;

@@ -21,6 +21,7 @@ export class MuxSessionManager {
   private readonly sessions = new Map<string, MuxSessionContext>();
   private readonly cleanupTtlMs: number;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private db: import('better-sqlite3').Database | null = null;
 
   constructor(options: MuxSessionManagerOptions = {}) {
     this.cleanupTtlMs = options.cleanupTtlMs ?? DEFAULT_CLEANUP_TTL_MS;
@@ -28,6 +29,14 @@ export class MuxSessionManager {
 
     this.cleanupTimer = setInterval(() => this.cleanupStaleSessions(), intervalMs);
     this.cleanupTimer.unref(); // Don't prevent process exit
+  }
+
+  /**
+   * Set the shared SQLite database instance.
+   * Must be called before the first getContext() invocation.
+   */
+  setDatabase(db: import('better-sqlite3').Database | null): void {
+    this.db = db;
   }
 
   /**
@@ -52,7 +61,7 @@ export class MuxSessionManager {
         logger.warning(
           `[session] Token changed for session ${meta.sessionId}, recreating context`
         );
-        const newCtx = createSessionContext(meta.sessionId, token);
+        const newCtx = createSessionContext(meta.sessionId, token, this.db);
         this.sessions.set(meta.sessionId, newCtx);
         return newCtx;
       }
@@ -62,7 +71,7 @@ export class MuxSessionManager {
     }
 
     // Create new session context
-    const ctx = createSessionContext(meta.sessionId, token);
+    const ctx = createSessionContext(meta.sessionId, token, this.db);
     this.sessions.set(meta.sessionId, ctx);
     logger.info(`[session] Created context for session ${meta.sessionId}`);
     return ctx;

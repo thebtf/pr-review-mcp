@@ -19,6 +19,7 @@ import {
 } from '../agents/invoker.js';
 import { detectReviewedAgents } from '../agents/detector.js';
 import { logger } from '../logging.js';
+import type { InvocationStore } from '../persistence/invocation-store.js';
 
 // ============================================================================
 // Input/Output Schemas
@@ -157,6 +158,8 @@ async function getConfiguredAgents(
 export async function prInvoke(
   input: InvokeInput,
   sessionOctokit?: import('@octokit/rest').Octokit,
+  invocationStore?: InvocationStore | null,
+  sessionId?: string,
 ): Promise<InvokeOutput> {
   const validated = InvokeInputSchema.parse(input);
   const { owner, repo, pr, agent, options } = validated;
@@ -231,7 +234,7 @@ export async function prInvoke(
   );
 
   const aggregated = aggregateResults(results, skipped);
-  return {
+  const output: InvokeOutput = {
     ...aggregated,
     since,
     invokedAgentIds: agentsToInvoke as string[],
@@ -239,4 +242,23 @@ export async function prInvoke(
       ? `Call pr_await_reviews with since="${since}" and agents=${JSON.stringify(agentsToInvoke)} to wait for reviews.`
       : 'No agents invoked — no need to call pr_await_reviews.',
   };
+
+  // Record invocation to SQLite for session recovery
+  if (invocationStore && agentsToInvoke.length > 0) {
+    try {
+      const invocationId = invocationStore.record({
+        owner,
+        repo,
+        pr,
+        sessionId: sessionId ?? 'default',
+        agents: agentsToInvoke as string[],
+        since,
+      });
+      (output as InvokeOutput & { invocationId?: number }).invocationId = invocationId;
+    } catch (e) {
+      logger.warning(`[invoke] Failed to record invocation: ${e}`);
+    }
+  }
+
+  return output;
 }
