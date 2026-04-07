@@ -8,7 +8,7 @@ import { fetchAllThreads } from './shared.js';
 import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
-import type { CoordinationStateManager } from '../coordination/state.js';
+import type { ICoordinationStateManager } from '../coordination/types.js';
 import type { SummaryInput, SummaryOutput } from '../github/types.js';
 
 export const SummaryInputSchema = z.object({
@@ -39,7 +39,7 @@ export const SummaryOutputSchema = z.object({
 export async function prSummary(
   input: SummaryInput,
   client: GitHubClient,
-  coordination?: CoordinationStateManager
+  coordination?: ICoordinationStateManager
 ): Promise<SummaryOutput> {
   const validated = SummaryInputSchema.parse(input);
   const { owner, repo, pr } = validated;

@@ -13,6 +13,7 @@ import {
 } from '../github/state-comment.js';
 import type {
   CoordinationState,
+  CoordinationStatus,
   FilePartition,
   AgentState,
   PartitionResult,
@@ -207,7 +208,7 @@ export class CoordinationStateManager {
   /**
    * Get current status summary
    */
-  getStatus() {
+  getStatus(): CoordinationStatus {
     if (!this.currentRun) {
       return { active: false };
     }

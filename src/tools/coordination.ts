@@ -3,7 +3,7 @@ import { getOctokit } from '../github/octokit.js';
 import type { Octokit } from '@octokit/rest';
 import { GitHubClient, StructuredError } from '../github/client.js';
 import { logger } from '../logging.js';
-import { CoordinationStateManager } from '../coordination/state.js';
+import type { ICoordinationStateManager } from '../coordination/types.js';
 import {
   ClaimWorkSchema,
   ReportProgressSchema,
@@ -105,7 +105,7 @@ async function initializeRun(
   owner: string,
   repo: string,
   pr: number,
-  coordination: CoordinationStateManager,
+  coordination: ICoordinationStateManager,
   octokit?: import('@octokit/rest').Octokit
 ): Promise<string> {
   const ok = octokit ?? getOctokit();
@@ -138,7 +138,7 @@ async function refreshPartitions(
   owner: string,
   repo: string,
   pr: number,
-  coordination: CoordinationStateManager
+  coordination: ICoordinationStateManager
 ): Promise<number> {
   // Fetch current unresolved comments
   const { comments } = await fetchAllThreads(client, owner, repo, pr, {
@@ -160,7 +160,7 @@ async function refreshPartitions(
 export async function prClaimWork(
   input: ClaimWorkInput,
   client: GitHubClient,
-  coordination: CoordinationStateManager,
+  coordination: ICoordinationStateManager,
   octokit?: import('@octokit/rest').Octokit
 ) {
   const { agent_id, pr_info, force } = input;
@@ -259,7 +259,7 @@ export async function prClaimWork(
 
 export async function prReportProgress(
   input: ReportProgressInput,
-  coordination: CoordinationStateManager
+  coordination: ICoordinationStateManager
 ): Promise<
   | { status: 'error'; message: string }
   | { status: 'success'; file: string; new_status: 'done' | 'failed' | 'skipped' }
@@ -285,7 +285,7 @@ export async function prReportProgress(
 export async function prGetWorkStatus(
   input: GetWorkStatusInput,
   client: GitHubClient,
-  coordination: CoordinationStateManager,
+  coordination: ICoordinationStateManager,
   octokit?: Octokit,
 ) {
   // We currently ignore run_id in input as we only support singleton active run
@@ -318,7 +318,7 @@ export async function prGetWorkStatus(
 
 export async function prResetCoordination(
   input: ResetCoordinationInput,
-  coordination: CoordinationStateManager
+  coordination: ICoordinationStateManager
 ) {
   // Validate confirm field
   if (!input.confirm) {
@@ -347,7 +347,7 @@ export async function prResetCoordination(
 
 export async function prProgressUpdate(
   input: ProgressUpdateInput,
-  coordination: CoordinationStateManager
+  coordination: ICoordinationStateManager
 ) {
   coordination.updateOrchestratorPhase(input.phase, input.detail);
   return { status: 'ok', phase: input.phase, detail: input.detail };
@@ -355,7 +355,7 @@ export async function prProgressUpdate(
 
 export async function prProgressCheck(
   _input: ProgressCheckInput,
-  coordination: CoordinationStateManager
+  coordination: ICoordinationStateManager
 ) {
   const progress = coordination.getOrchestratorProgress();
   const status = coordination.getStatus();

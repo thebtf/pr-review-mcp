@@ -7,12 +7,15 @@
 import { createOctokitForToken, createGraphQLForToken } from '../github/octokit.js';
 import { GitHubClient } from '../github/client.js';
 import { CoordinationStateManager } from '../coordination/state.js';
+import { SqliteCoordinationStateManager } from '../coordination/sqlite-state.js';
 import { InvocationStore } from '../persistence/invocation-store.js';
 import type { MuxSessionContext } from './types.js';
 
 /**
  * Create a new MuxSessionContext for a given session ID and GitHub token.
  * Instantiates per-session Octokit, GraphQL, GitHubClient, and CoordinationStateManager.
+ * When a SQLite database is available, uses SqliteCoordinationStateManager for
+ * persistent partition state; falls back to the in-memory implementation otherwise.
  */
 export function createSessionContext(
   sessionId: string,
@@ -22,7 +25,9 @@ export function createSessionContext(
   const octokit = createOctokitForToken(token);
   const graphql = createGraphQLForToken(token);
   const githubClient = new GitHubClient(graphql);
-  const coordination = new CoordinationStateManager();
+  const coordination = db
+    ? new SqliteCoordinationStateManager(db, sessionId)
+    : new CoordinationStateManager();
 
   return {
     sessionId,
