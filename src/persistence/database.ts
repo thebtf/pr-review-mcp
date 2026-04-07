@@ -8,6 +8,7 @@
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { createRequire } from 'module';
 import { logger } from '../logging.js';
 
 const DB_DIR = join(homedir(), '.config', 'pr-review');
@@ -96,8 +97,9 @@ export function openDatabase(): import('better-sqlite3').Database | null {
   try {
     mkdirSync(DB_DIR, { recursive: true });
 
-    // Dynamic require so that a load failure can be caught and handled gracefully.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // Dynamic require via createRequire — better-sqlite3 is a native CJS module
+    // that cannot be imported via ESM `import()`. createRequire bridges the gap.
+    const require = createRequire(import.meta.url);
     const Database = require('better-sqlite3') as typeof import('better-sqlite3');
     const db = new Database(DB_PATH);
 
@@ -121,6 +123,9 @@ export function openDatabase(): import('better-sqlite3').Database | null {
 // ============================================================================
 
 function runMigrations(db: import('better-sqlite3').Database): void {
+  // Ensure metadata table exists before querying schema version.
+  db.exec(DDL_METADATA);
+
   const row = db
     .prepare<[], { value: string }>(`SELECT value FROM metadata WHERE key = 'schema_version'`)
     .get();
@@ -130,7 +135,6 @@ function runMigrations(db: import('better-sqlite3').Database): void {
     db.exec(DDL_INVOCATIONS);
     db.exec(DDL_AGENT_STATUS);
     db.exec(DDL_COORDINATION);
-    db.exec(DDL_METADATA);
 
     db.prepare(`INSERT INTO metadata (key, value) VALUES ('schema_version', ?)`).run(
       String(SCHEMA_VERSION),
