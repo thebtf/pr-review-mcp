@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-11
+
+### Added
+
+- **SQLite persistence for review state** — `src/persistence/{database,invocation-store,types}.ts` add durable storage at `~/.config/pr-review/pr-review.db` for invocations, agent status caching, and coordination state.
+- **`pr_sessions` tool** — list active and recent review invocations across sessions for crash recovery and cross-session visibility.
+- **SQLite-backed coordination adapter** — `src/coordination/sqlite-state.ts` persists worker partitions and progress across MCP server restarts.
+- **Built-in `pr-reviewer` agent** — `agents/pr-reviewer.md` ships an autonomous background PR review executor as part of the plugin package.
+- **Canonical `pr-review` skill** — `skills/pr-review/SKILL.md` documents the correct plugin-facing review flow and interface boundaries.
+- **`review-background` command wrapper** — `commands/review-background.md` aligns shipped MCP prompts with command docs.
+
+### Changed
+
+- **`pr_await_reviews`** is now non-blocking — it performs a single completion check and returns `retryAfterMs` instead of holding the MCP call open for minutes.
+- **Implicit await recovery** — `pr_await_reviews` can recover `since` and `agents` from SQLite-backed invocation state when they are omitted.
+- **Plugin packaging** — `package.json#files` now ships `agents`, `skills`, `commands`, `.claude-plugin`, `.mcp.json`, and `AGENTS.md` for plugin consumers.
+- **Plugin metadata alignment** — `.claude-plugin/plugin.json` version is now aligned to the repo release version.
+- **Plugin-first documentation** — `AGENTS.md` now documents the repo as a plugin-first MCP package with built-in prompts, commands, agent, and skill.
+- **`pr-reviewer` execution model** — uses MCP-native local execution by default, with optional `mcp__aimux__agents` for larger changes when available in the consumer environment.
+
+### Fixed
+
+- **Local dev MCP startup** — project-level `.mcp.json` now uses `node dist/index.js` for in-repo debugging instead of relying on plugin-root interpolation.
+- **`/pr:review` no-arg regression** — `src/server.ts` no longer exposes internal `owner`/`repo` fields in the MCP prompt args schema, restoring bare `/pr:review` submission.
+- **`better-sqlite3` ESM compatibility** — switched to `createRequire(import.meta.url)` and fixed metadata table initialization order.
+- **Prompt/skill/runtime drift** — built-in review docs now distinguish MCP tools, MCP prompts, and Claude skills more explicitly.
+
+## [0.5.0] - 2026-04-03
+
+### Added
+
+- **Unified agent completion detection** — `src/agents/completion-detector.ts` replaces divergent detection paths with per-agent `CompletionStrategy` rules.
+- **Per-agent completion strategies** — body-pattern confirmation, exclude patterns, and check-run integration for CodeRabbit, Gemini, Copilot, Sourcery, Codex, Qodo, and Greptile.
+- **Per-agent timeout handling** — review waiting now reasons about `maxWaitMs` per reviewer instead of a single all-or-nothing timeout model.
+- **Greptile detection tests** — additional coverage for the corrected `greptile-apps` bot identity.
+
+### Changed
+
+- **Smart detection** — `detector.ts` now delegates to the unified completion detector instead of maintaining a separate implementation.
+- **`pr_poll_updates`** now uses the same unified completion logic as the rest of the review pipeline.
+- **Review prompt rules** — all review severities (including MINOR and NITPICK) are mandatory, and each suggestion must be confidence-checked before being applied.
+
+### Fixed
+
+- **CodeRabbit / reviewer detection** — detection now uses the most recent activity instead of being biased toward older pages.
+- **Review monitor dedup bug** — removed stale shared-promise behavior that could return old waiting state.
+- **Review body classification** — excludes placeholder/setup/rate-limit content from being treated as completed reviews.
+- **AGENTS.md bot metadata** — corrected Greptile login and aligned completion-detection docs with real runtime behavior.
+
 ## [0.3.0] - 2026-03-28
 
 ### Added
