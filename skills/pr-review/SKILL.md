@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: "Canonical consumer skill for PR review in this plugin. Uses the built-in MCP prompt /pr:review and delegates autonomous execution to the pr-reviewer background agent."
+description: "Canonical consumer skill for PR review in this plugin. Delegates autonomous execution to the built-in pr-reviewer background agent and documents the correct relationship between MCP tools, MCP prompts, and Claude skills."
 allowed-tools: mcp__pr__*, Agent, TaskCreate, TaskUpdate, TaskList, Read, Edit, Write, Grep, Glob, Bash(npm *), Bash(git *)
 argument-hint: "[pr-number-or-url]"
 ---
@@ -11,9 +11,9 @@ Use this as the canonical consumer-facing entry for PR review workflows.
 
 ## TL;DR
 
-- `/pr:review` is the built-in MCP prompt slash command.
-- `pr-reviewer` is the background autonomous executor agent.
-- This skill coordinates them so review work runs through MCP tools, not ad-hoc CLI scraping.
+- `pr-reviewer` is the built-in background autonomous executor agent.
+- This skill is the canonical consumer-facing entry for dispatching that agent.
+- `/pr:review` remains the built-in MCP prompt slash command for MCP-native flows and compatibility, but it is not the primary plugin workflow surface.
 
 ## Interface boundaries (must stay explicit)
 
@@ -24,15 +24,15 @@ Use this as the canonical consumer-facing entry for PR review workflows.
 ## Core workflow
 
 1. Parse input PR target (number, `owner/repo#N`, or URL).
-2. Start with the built-in MCP prompt: `/pr:review ...`.
-3. Delegate autonomous execution to `pr-reviewer` in background (`model: sonnet`).
-4. Let `pr-reviewer` run full cycle:
+2. Dispatch the built-in `pr-reviewer` agent in background (`model: sonnet`).
+3. Let `pr-reviewer` run the full MCP-native review cycle locally:
    - invoke reviewers (`pr_invoke`)
    - await completion (`pr_await_reviews` / `pr_poll_updates`)
-   - process findings (`pr_list`, `pr_get`, code fixes)
+   - process findings (`pr_list`, `pr_get`, local code fixes)
    - resolve fixed threads (`pr_resolve`)
    - hand back structured readiness report
-5. Keep merge decision outside the worker (never auto-merge).
+4. Keep merge decision outside the worker (never auto-merge).
+5. Use `/pr:review` only when you explicitly want the MCP prompt/slash-command path instead of the built-in plugin agent path.
 
 ## Non-negotiable review rules
 
@@ -44,5 +44,6 @@ Use this as the canonical consumer-facing entry for PR review workflows.
 ## Anti-patterns
 
 - `Skill("mcp__pr__review")` — wrong abstraction. That is not a Claude skill.
-- Manual main-context review via `gh pr diff`/`gh api ...comments` as primary review path — wrong. Use MCP prompt + MCP tools flow.
+- Treating `/pr:review` as the only plugin-facing interface — wrong. The built-in `pr-reviewer` agent is the primary plugin workflow surface.
+- Manual main-context review via `gh pr diff`/`gh api ...comments` as primary review path — wrong. Use the built-in agent or MCP-native prompt/tool flow.
 - Auto-merging from autonomous worker — forbidden.

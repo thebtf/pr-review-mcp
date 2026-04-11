@@ -95,6 +95,7 @@ pr-review-mcp/
 │       └── SKILL.md           # Canonical consumer-facing PR review skill
 ├── commands/
 │   ├── review.md              # Prompt wrapper for /pr:review
+│   ├── review-background.md   # Prompt wrapper for /pr:review-background
 │   └── setup.md               # Prompt wrapper for /pr:setup
 └── dist/                      # Compiled output
 ```
