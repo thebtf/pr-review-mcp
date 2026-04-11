@@ -487,11 +487,11 @@ export class PRReviewMCPServer {
   private registerPrompts(): void {
     const client = this.githubClient;
 
-    // Shared Zod shape for review prompt arguments
+    // Shared prompt arguments for slash-command use.
+    // Keep this aligned with REVIEW_PROMPT_DEFINITION.arguments so Claude Code
+    // does not prompt for internal owner/repo values before submit.
     const reviewArgsSchema = {
-      owner: z.string().optional().describe('Repository owner'),
-      repo: z.string().optional().describe('Repository name'),
-      pr: z.string().optional().describe('PR number, GitHub URL, or short format (owner/repo#123)'),
+      pr: z.string().optional().describe('PR number, GitHub URL, or short format (owner/repo#123). Omit to process all open PRs.'),
       workers: z.string().optional().describe('Number of parallel workers (default: 3)'),
     };
 
