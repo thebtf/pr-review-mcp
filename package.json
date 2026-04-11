@@ -11,7 +11,10 @@
     "dist",
     ".claude-plugin",
     ".mcp.json",
+    "agents",
+    "skills",
     "commands",
+    "AGENTS.md",
     "README.md",
     "README.ru.md",
     "LICENSE"

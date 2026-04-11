@@ -2,7 +2,7 @@
 
 ## PURPOSE
 
-MCP server for orchestrating AI-driven PR reviews with 7 agent sources, 20 tools, and parallel multi-agent coordination.
+Plugin-first MCP package for orchestrating AI-driven PR reviews with 7 agent sources, 20 tools, and parallel multi-agent coordination.
 
 **Features:**
 - GraphQL-based GitHub integration with cursor pagination
@@ -10,6 +10,8 @@ MCP server for orchestrating AI-driven PR reviews with 7 agent sources, 20 tools
 - AI prompt extraction from review comments
 - Agent invocation + server-side review await (`pr_invoke` → `pr_await_reviews`)
 - Parallel worker orchestration for comment processing
+- Built-in prompt/command wrappers (`/pr:review`, `/pr:review-background`, `/pr:setup`)
+- Built-in background `pr-reviewer` agent and canonical `pr-review` skill
 
 ---
 
@@ -84,12 +86,17 @@ pr-review-mcp/
 │       ├── state.ts           # In-memory coordination state (CoordinationStateManager)
 │       ├── sqlite-state.ts    # SQLite-backed coordination state
 │       └── types.ts           # Coordination types
+├── agents/
+│   └── pr-reviewer.md         # Built-in background PR reviewer agent
 ├── skills/
-│   └── review/
-│       └── SKILL.md           # PR review skill (Claude Code plugin)
+│   ├── review/
+│   │   └── SKILL.md           # MCP-prompt-oriented review skill
+│   └── pr-review/
+│       └── SKILL.md           # Canonical consumer-facing PR review skill
 ├── commands/
-│   ├── review.md              # Legacy review command
-│   └── setup.md               # Setup command
+│   ├── review.md              # Prompt wrapper for /pr:review
+│   ├── review-background.md   # Prompt wrapper for /pr:review-background
+│   └── setup.md               # Prompt wrapper for /pr:setup
 └── dist/                      # Compiled output
 ```
 
