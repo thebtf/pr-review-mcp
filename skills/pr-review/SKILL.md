@@ -41,7 +41,7 @@ Use this as the canonical consumer-facing entry for PR review workflows.
 - Process all severities, including MINOR and NITPICK.
 - Confidence-check every suggestion before applying.
 - Resolve each fixed thread.
-- Hand back with explicit status: ready, needs decision, or blocked.
+- Hand back with explicit status: READY_FOR_HUMAN_MERGE | NEEDS_USER_DECISION | BLOCKED.
 
 ## Anti-patterns
 
