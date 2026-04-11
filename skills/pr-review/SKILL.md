@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: "Canonical consumer skill for PR review in this plugin. Delegates autonomous execution to the built-in pr-reviewer background agent and documents the correct relationship between MCP tools, MCP prompts, and Claude skills."
-allowed-tools: mcp__pr__*, Agent, TaskCreate, TaskUpdate, TaskList, Read, Edit, Write, Grep, Glob, Bash(npm *), Bash(git *)
+allowed-tools: mcp__pr__*, mcp__aimux__agents, Agent, TaskCreate, TaskUpdate, TaskList, Read, Edit, Write, Grep, Glob, Bash(npm *), Bash(git *)
 argument-hint: "[pr-number-or-url]"
 ---
 
@@ -25,10 +25,12 @@ Use this as the canonical consumer-facing entry for PR review workflows.
 
 1. Parse input PR target (number, `owner/repo#N`, or URL).
 2. Dispatch the built-in `pr-reviewer` agent in background (`model: sonnet`).
-3. Let `pr-reviewer` run the full MCP-native review cycle locally:
+3. Let `pr-reviewer` run the full MCP-native review cycle:
    - invoke reviewers (`pr_invoke`)
    - await completion (`pr_await_reviews` / `pr_poll_updates`)
-   - process findings (`pr_list`, `pr_get`, local code fixes)
+   - process findings (`pr_list`, `pr_get`, code fixes)
+   - prefer `mcp__aimux__agents` for larger code changes when aimux is available in the consumer environment
+   - otherwise apply fixes locally through the shipped MCP/tool surface
    - resolve fixed threads (`pr_resolve`)
    - hand back structured readiness report
 4. Keep merge decision outside the worker (never auto-merge).

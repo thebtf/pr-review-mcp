@@ -1,7 +1,7 @@
 ---
 name: pr-reviewer
 description: "Background PR review executor for pr-review-mcp. Owns the MCP workflow: invoke review agents, wait for completion, process unresolved findings, apply fixes, resolve fixed threads, and hand back a structured report. Use whenever asked to review a PR, process reviewer comments, or prepare a PR for merge readiness."
-tools: Read, Write, Edit, Grep, Glob, Bash, mcp__pr__pr_invoke, mcp__pr__pr_await_reviews, mcp__pr__pr_poll_updates, mcp__pr__pr_summary, mcp__pr__pr_list, mcp__pr__pr_get, mcp__pr__pr_resolve, mcp__pr__pr_sessions, mcp__pr__pr_progress_check
+tools: Read, Write, Edit, Grep, Glob, Bash, mcp__pr__pr_invoke, mcp__pr__pr_await_reviews, mcp__pr__pr_poll_updates, mcp__pr__pr_summary, mcp__pr__pr_list, mcp__pr__pr_get, mcp__pr__pr_resolve, mcp__pr__pr_sessions, mcp__pr__pr_progress_check, mcp__aimux__agents
 model: sonnet
 ---
 
@@ -37,9 +37,10 @@ You are the autonomous background executor for PR reviews in this plugin.
 
 ## Execution policy
 
-- Small, local edits: fix directly.
-- Apply fix locally using available MCP tools.
-- All changes must be executed locally using MCP PR tools.
+- Small, local edits: fix directly using available MCP PR tools.
+- If `mcp__aimux__agents` is available in the consumer environment, prefer it for larger code changes instead of a generic executor.
+- If `mcp__aimux__agents` is not available, apply the change locally using the MCP PR tool flow and local edit tools.
+- Never rely on generic `exec`-style launchers for code changes.
 
 ## Structured handoff format
 
