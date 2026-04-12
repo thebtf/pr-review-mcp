@@ -33,6 +33,14 @@ export interface QodoReview {
   focusAreas: QodoComment[];
 }
 
+function stripHtml(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const QODO_BOT = 'qodo-code-review[bot]';
 const MARKER = 'PR Reviewer Guide';
 
@@ -161,7 +169,7 @@ function parseQodoComment(
   const securityConcerns = parseSecurityConcerns(body, comment.id, owner, repo, pr);
 
   // Parse focus areas with file path resolution
-  const focusAreas = parseFocusAreas(body, comment.id, owner, repo, pr, fileMap);
+  const focusAreas = parseFocusAreas(body, comment.id, fileMap);
 
   return {
     commentId: comment.id,
@@ -172,6 +180,32 @@ function parseQodoComment(
     hasTests,
     securityConcerns,
     focusAreas
+  };
+}
+
+function parseFocusAreaFileInfo(link: string): {
+  file: string;
+  line: number | null;
+  lineEnd: number | null;
+} {
+  const match = link.match(/#diff-([a-f0-9]{64})(?:R(\d+)(?:-R(\d+))?)?/i);
+  if (!match) {
+    return {
+      file: link,
+      line: null,
+      lineEnd: null
+    };
+  }
+
+  const startLine = match[2] ? parseInt(match[2], 10) : null;
+  const endLine = match[3] ? parseInt(match[3], 10) : startLine;
+  const hasStartLine = startLine !== null && !Number.isNaN(startLine);
+  const hasEndLine = endLine !== null && !Number.isNaN(endLine);
+
+  return {
+    file: link,
+    line: hasStartLine ? startLine : null,
+    lineEnd: hasEndLine ? endLine : null
   };
 }
 
@@ -222,56 +256,49 @@ function parseSecurityConcerns(
 /**
  * Parse focus areas (details/summary blocks)
  *
- * TODO: Improve body extraction - currently returns empty for some Qodo formats.
- * The regex may not match all HTML structures used by Qodo.
- * See: https://github.com/thebtf/pr-review-mcp/issues/5
+ * Supports multiple Qodo HTML variants for details blocks and anchor attributes.
  */
 function parseFocusAreas(
   body: string,
   commentId: number,
-  owner: string,
-  repo: string,
-  pr: number,
   fileMap: Map<string, string>
 ): QodoComment[] {
   const comments: QodoComment[] = [];
 
-  // Find all details blocks with file links
-  const detailsRegex = /<details>\s*<summary>\s*<a\s+href='([^']+)'[^>]*>\s*<strong>([^<]+)<\/strong>/g;
-  let match;
+  const detailsRegex =
+    /<details[^>]*>\s*<summary[^>]*>([\s\S]*?)<\/summary>\s*([\s\S]*?)<\/details>/gi;
+
+  let match: RegExpExecArray | null = null;
   let index = 0;
 
   while ((match = detailsRegex.exec(body)) !== null) {
-    const url = match[1];
-    const title = match[2].trim();
+    const summaryHtml = match[1] || '';
+    const detailsContent = match[2] || '';
 
-    // Parse file and line from URL
-    // Format: .../files#diff-{hash}R{start}-R{end}
-    const lineMatch = url.match(/R(\d+)(?:-R(\d+))?$/);
-    const line = lineMatch ? parseInt(lineMatch[1]) : null;
-    const lineEnd = lineMatch?.[2] ? parseInt(lineMatch[2]) : line;
+    const linkMatch = summaryHtml.match(/<a[^>]*\shref=("|')([^"']+)\1[^>]*>([\s\S]*?)<\/a>/i);
+    const rawUrl = linkMatch?.[2]?.trim() || '';
+    const fileInfo = parseFocusAreaFileInfo(rawUrl);
+    const file = resolveFileFromUrl(fileInfo.file, fileMap);
+    const title = stripHtml(linkMatch?.[3] || summaryHtml).slice(0, 120);
 
-    // Resolve file path from URL hash
-    const file = resolveFileFromUrl(url, fileMap);
+    if (!title) {
+      continue;
+    }
 
-    // Extract description from the details content
-    const afterMatch = body.slice(match.index).match(/<\/summary>\s*([\s\S]*?)<\/details>/);
-    const description = afterMatch?.[1]?.replace(/```[\s\S]*?```/g, '').replace(/<[^>]+>/g, ' ').trim().slice(0, 300) || '';
-
-    const issueIndex = index;
-    index++;
     comments.push({
-      id: `qodo-focus-${commentId}-${issueIndex}`,
+      id: `qodo-focus-${commentId}-${index}`,
       source: 'qodo',
-      file, // Now contains actual file path instead of URL
-      line,
-      lineEnd,
+      file,
+      line: fileInfo.line,
+      lineEnd: fileInfo.lineEnd,
       severity: 'MAJOR',
       title,
-      body: description,
-      url,
+      body: stripHtml(detailsContent).slice(0, 300),
+      url: rawUrl,
       resolved: false
     });
+
+    index++;
   }
 
   return comments;
