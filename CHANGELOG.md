@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-15
+
+### Added
+
+- **Structured merge-readiness semantics** — `pr_summary` returns `mergeReadiness` with `mergeReady`, `reviewReady`, `notes`, and `unresolvedByClass`. Classification layer distinguishes `fix_now`, `non_blocking_residual`, `systemic_follow_up`, `needs_human_judgement` per finding.
+- **Per-comment classification** — `pr_list` comments include optional `actionClass`, `blocksMerge`, `classificationReason`, `residualKind` fields. Stale/synthetic residue marked as non-blocking; unknown findings fail closed.
+- **Poll merge-readiness** — `pr_poll_updates` compact comments summary includes `mergeReadiness` when comments are fetched.
+- **`getPRMergeStatus` GraphQL query** — fetches `reviewDecision` and `mergeStateStatus` for merge-readiness computation.
+
+### Changed
+
+- **muxCwd extraction** — per-session CWD now read from `_meta.muxCwd` (injected by mcp-mux v0.7.0+) instead of `muxEnv.PWD`. Session layer (types, meta, context, manager) updated.
+- **Provider-limit detection** — completion detector surfaces exclude-pattern match detail instead of silently discarding excluded reviews. Enables `waitState: 'provider_limit'` classification.
+
+### Fixed
+
+- **`hasMore` pagination anomaly** — `pr_list(filter.resolved=false)` no longer returns `hasMore: true` when all filtered comments are empty. Uses GraphQL `pageInfo.hasNextPage` instead of comparing pre-filter totalCount with post-filter length.
+
 ## [0.7.0] - 2026-05-14
 
 ### Added
