@@ -211,28 +211,38 @@ function evaluateAgent(
   const strategy = config.completionStrategy;
   const { authorPattern } = config;
 
-  // Try each source in priority order
+  // Try each source in priority order.
+  // ready=true results return immediately; ready=false results (exclude matches)
+  // are collected — a later source may still produce a completion signal.
+  let excludeResult: AgentCompletionResult | null = null;
+
   for (const source of strategy.sources) {
     switch (source) {
       case 'check_runs': {
         const result = evaluateCheckRuns(agentId, config, checkRuns);
-        if (result) return result;
+        if (result?.ready) return result;
+        if (result && !excludeResult) excludeResult = result;
         break;
       }
       case 'reviews': {
         const result = evaluateReviews(agentId, config, reviews, sinceDate);
-        if (result) return result;
+        if (result?.ready) return result;
+        if (result && !excludeResult) excludeResult = result;
         break;
       }
       case 'issue_comments': {
         const result = evaluateIssueComments(agentId, config, issueComments, sinceDate);
-        if (result) return result;
+        if (result?.ready) return result;
+        if (result && !excludeResult) excludeResult = result;
         break;
       }
     }
   }
 
-  // No completion signal found
+  // Return exclude detail if available — enables provider_limit classification
+  if (excludeResult) return excludeResult;
+
+  // No signal at all
   return {
     agentId,
     name: config.name,
@@ -298,13 +308,18 @@ function evaluateReviews(
 
   if (fresh.length === 0) return null;
 
+  // Track excluded bodies for provider-limit classification downstream
+  const excludedBodies: string[] = [];
+
   // Find best match: prefer reviews whose body matches bodyPattern
   for (const review of fresh) {
     const body = review.body ?? '';
 
     // Check exclude patterns first
-    if (strategy.excludePatterns?.some(p => p.test(body))) {
+    const matchedExclude = strategy.excludePatterns?.find(p => p.test(body));
+    if (matchedExclude) {
       logger.debug(`[completion] ${agentId}: review excluded by pattern match`);
+      excludedBodies.push(body.slice(0, 200));
       continue;
     }
 
@@ -358,6 +373,17 @@ function evaluateReviews(
     }
   }
 
+  if (excludedBodies.length > 0) {
+    return {
+      agentId,
+      name: config.name,
+      ready: false,
+      confidence: 'medium' as CompletionConfidence,
+      source: 'reviews' as CompletionSource,
+      detail: `Review excluded by pattern: ${excludedBodies[0]}`,
+    };
+  }
+
   return null;
 }
 
@@ -384,6 +410,8 @@ function evaluateIssueComments(
 
   if (fresh.length === 0) return null;
 
+  const excludedBodies: string[] = [];
+
   // Check body patterns (most recent first)
   const sorted = [...fresh].sort((a, b) => {
     const tsA = new Date(a.updated_at ?? a.created_at).getTime();
@@ -396,6 +424,7 @@ function evaluateIssueComments(
 
     // Check exclude patterns
     if (strategy.excludePatterns?.some(p => p.test(body))) {
+      excludedBodies.push(body.slice(0, 200));
       continue;
     }
 
@@ -414,6 +443,17 @@ function evaluateIssueComments(
           detail: `Issue comment with body match`,
       };
     }
+  }
+
+  if (excludedBodies.length > 0) {
+    return {
+      agentId,
+      name: config.name,
+      ready: false,
+      confidence: 'medium' as CompletionConfidence,
+      source: 'issue_comments' as CompletionSource,
+      detail: `Comment excluded by pattern: ${excludedBodies[0]}`,
+    };
   }
 
   return null;

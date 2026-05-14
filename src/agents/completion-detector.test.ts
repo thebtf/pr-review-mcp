@@ -215,4 +215,39 @@ describe('fetchCompletionStatus — rate-limit exclusion', () => {
     const gemini = result.agents.find(a => a.agentId === 'gemini');
     expect(gemini?.ready).toBe(true);
   });
+
+  it('surfaces exclude detail for provider_limit classification', async () => {
+    const review = {
+      user: { login: 'chatgpt-codex-connector' },
+      body: '### 💡 Codex Review\n\nAPI rate limit exceeded. Please try again later.',
+      state: 'COMMENTED',
+      submitted_at: AFTER_SINCE,
+    };
+
+    const octokit = makeMockOctokit([review], []);
+    const result = await fetchCompletionStatus(
+      'owner', 'repo', 1, ['codex'], SINCE, octokit,
+    );
+
+    const codex = result.agents.find(a => a.agentId === 'codex');
+    expect(codex?.ready).toBe(false);
+    expect(codex?.detail).toMatch(/excluded by pattern/i);
+  });
+
+  it('surfaces exclude detail from issue comment for provider_limit', async () => {
+    const comment = {
+      user: { login: 'greptile-apps' },
+      body: 'Your free trial has ended. Please upgrade to continue.',
+      created_at: AFTER_SINCE,
+    };
+
+    const octokit = makeMockOctokit([], [comment]);
+    const result = await fetchCompletionStatus(
+      'owner', 'repo', 1, ['greptile'], SINCE, octokit,
+    );
+
+    const greptile = result.agents.find(a => a.agentId === 'greptile');
+    expect(greptile?.ready).toBe(false);
+    expect(greptile?.detail).toMatch(/excluded by pattern/i);
+  });
 });
