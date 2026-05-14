@@ -59,6 +59,8 @@ pr-review-mcp/
 │   │   ├── merge.ts           # pr_merge
 │   │   ├── coordination.ts    # pr_claim_work, pr_report_progress, etc.
 │   │   ├── sessions.ts        # pr_sessions
+│   │   ├── cancel.ts          # pr_cancel
+│   │   ├── wait-state.ts      # WaitState classification (shared)
 │   │   └── shared.ts          # Shared utilities
 │   ├── persistence/
 │   │   ├── database.ts        # SQLite database init (openDatabase)
@@ -102,7 +104,7 @@ pr-review-mcp/
 
 ---
 
-## MCP TOOLS (20)
+## MCP TOOLS (21)
 
 ### Analysis
 
@@ -126,6 +128,7 @@ pr-review-mcp/
 | `pr_reviewers` | Request or remove reviewers |
 | `pr_create` | Create a pull request |
 | `pr_merge` | Merge a PR (with MCP elicitation confirmation) |
+| `pr_cancel` | Cancel an active review invocation by (owner, repo, pr) or invocationId |
 
 ### Orchestration
 
