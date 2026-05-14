@@ -159,6 +159,7 @@ export interface SummaryOutput {
     resolved: number;
     unresolved: number;
   };
+  mergeReadiness?: MergeReadinessOutput;
 }
 
 export interface ListFilter {
@@ -186,6 +187,11 @@ export interface ListComment {
   title: string;
   resolved: boolean;
   hasAiPrompt: boolean;
+  // Per-finding classification (optional — populated by pr_list, absent in pr_changes/pr_poll)
+  actionClass?: string;
+  blocksMerge?: boolean;
+  classificationReason?: string;
+  residualKind?: string;
 }
 
 export interface ListOutput {
@@ -245,4 +251,35 @@ export interface ChangesOutput {
   comments: ListComment[];
   cursor: string | null;
   hasMore: boolean;
+}
+
+// ============================================================================
+// Merge-readiness query types
+// ============================================================================
+
+export interface PRMergeStatusData {
+  repository: {
+    pullRequest: {
+      reviewDecision: string | null;
+      mergeStateStatus: string | null;
+    } | null;
+  } | null;
+}
+
+// ============================================================================
+// Classification output types (for tool responses)
+// ============================================================================
+
+export interface ClassifiedComment {
+  actionClass?: string;
+  blocksMerge?: boolean;
+  classificationReason?: string;
+  residualKind?: string;
+}
+
+export interface MergeReadinessOutput {
+  mergeReady: boolean;
+  reviewReady: boolean;
+  notes: string[];
+  unresolvedByClass: Record<string, number>;
 }

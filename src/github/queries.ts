@@ -182,6 +182,21 @@ export const QUERIES = {
   `,
 
   /**
+   * Fetch merge-readiness signals for a pull request.
+   * Returns reviewDecision and mergeStateStatus used by the classification helper.
+   */
+  getPRMergeStatus: `
+    query($owner: String!, $repo: String!, $pr: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          reviewDecision
+          mergeStateStatus
+        }
+      }
+    }
+  `,
+
+  /**
    * Add reaction to a subject (comment, review, etc.)
    * Reaction content: THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY, CONFUSED, HEART, ROCKET, EYES
    */

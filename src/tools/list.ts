@@ -9,6 +9,7 @@ import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
 import type { ListInput, ListOutput, ListComment } from '../github/types.js';
+import { classifyFinding } from '../review/classify-unresolved.js';
 
 export const ListInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
@@ -34,6 +35,11 @@ export const ListOutputSchema = z.object({
     title: z.string(),
     resolved: z.boolean(),
     hasAiPrompt: z.boolean(),
+    // Classification fields — optional for backward compatibility
+    actionClass: z.string().optional(),
+    blocksMerge: z.boolean().optional(),
+    classificationReason: z.string().optional(),
+    residualKind: z.string().optional(),
   })),
   total: z.number(),
   hasMore: z.boolean(),
@@ -60,18 +66,40 @@ export async function prList(
 
   const { comments, totalCount, hasMore } = threadsResult;
 
-  // Convert review thread comments
-  const listComments: ListComment[] = comments.map(c => ({
-    id: c.id,
-    threadId: c.threadId,
-    file: c.file,
-    line: c.line,
-    severity: c.severity,
-    source: c.source,
-    title: c.title,
-    resolved: c.resolved,
-    hasAiPrompt: c.aiPrompt !== null
-  }));
+  // Convert review thread comments with per-finding classification
+  const listComments: ListComment[] = comments.map(c => {
+    const classification = !c.resolved
+      ? classifyFinding({
+          threadId: c.threadId,
+          outdated: c.outdated ?? false,
+          resolved: c.resolved ?? false,
+          severity: c.severity,
+          source: c.source,
+        })
+      : undefined;
+
+    return {
+      id: c.id,
+      threadId: c.threadId,
+      file: c.file,
+      line: c.line,
+      severity: c.severity,
+      source: c.source,
+      title: c.title,
+      resolved: c.resolved,
+      hasAiPrompt: c.aiPrompt !== null,
+      ...(classification
+        ? {
+            actionClass: classification.actionClass,
+            blocksMerge: classification.blocksMerge,
+            classificationReason: classification.classificationReason,
+            ...(classification.residualKind !== undefined
+              ? { residualKind: classification.residualKind }
+              : {}),
+          }
+        : {}),
+    };
+  });
 
   // Compute Qodo and Greptile comments once
   const qodoComments = qodoReview ? qodoToNormalizedComments(qodoReview) : [];
@@ -86,16 +114,36 @@ export async function prList(
     if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
     if (filter.file && !qc.file.includes(filter.file)) continue;
 
+    const classification = !resolved
+      ? classifyFinding({
+          threadId: qc.id,
+          outdated: false,
+          resolved,
+          severity: qc.severity,
+          source: 'qodo',
+        })
+      : undefined;
+
     listComments.push({
       id: qc.id,
-      threadId: qc.id, // Qodo doesn't have threads
+      threadId: qc.id,
       file: qc.file,
       line: qc.line ?? '?',
       severity: qc.severity,
       source: 'qodo',
       title: qc.title,
       resolved,
-      hasAiPrompt: false
+      hasAiPrompt: false,
+      ...(classification
+        ? {
+            actionClass: classification.actionClass,
+            blocksMerge: classification.blocksMerge,
+            classificationReason: classification.classificationReason,
+            ...(classification.residualKind !== undefined
+              ? { residualKind: classification.residualKind }
+              : {}),
+          }
+        : {}),
     });
   }
 
@@ -108,16 +156,30 @@ export async function prList(
     if (filter.resolved !== undefined && resolved !== filter.resolved) continue;
     if (filter.file && gc.file && !gc.file.includes(filter.file)) continue;
 
+    const classification = classifyFinding({
+      threadId: gc.id,
+      outdated: false,
+      resolved,
+      severity: gc.severity,
+      source: 'greptile',
+    });
+
     listComments.push({
       id: gc.id,
-      threadId: gc.id, // Greptile doesn't have threads for issue comments
+      threadId: gc.id,
       file: gc.file || '',
       line: gc.line ?? '?',
       severity: gc.severity,
       source: 'greptile',
       title: gc.title,
       resolved,
-      hasAiPrompt: false
+      hasAiPrompt: false,
+      actionClass: classification.actionClass,
+      blocksMerge: classification.blocksMerge,
+      classificationReason: classification.classificationReason,
+      ...(classification.residualKind !== undefined
+        ? { residualKind: classification.residualKind }
+        : {}),
     });
   }
 

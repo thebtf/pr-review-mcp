@@ -16,6 +16,7 @@ import {
   type AgentsStatus,
 } from '../agents/completion-detector.js';
 import { classifyWaitState, type WaitState, type WaitStateFields } from './wait-state.js';
+import { classifyFinding, computeMergeReadiness, type ClassifiedFinding } from '../review/classify-unresolved.js';
 export type { WaitState, WaitStateFields } from './wait-state.js';
 
 // ============================================================================
@@ -71,6 +72,12 @@ export interface CommentsSummary {
   new: number;
   bySeverity: Record<string, number>;
   bySource: Record<string, number>;
+  mergeReadiness?: {
+    mergeReady: boolean;
+    reviewReady: boolean;
+    notes: string[];
+    unresolvedByClass: Record<string, number>;
+  };
 }
 
 export interface PollOutput {
@@ -280,6 +287,7 @@ export async function prPollUpdates(
       let unresolved = 0;
       const bySeverity: Record<string, number> = {};
       const bySource: Record<string, number> = {};
+      const classifiedFindings: ClassifiedFinding[] = [];
 
       for (const c of allComments) {
         if (!c.resolved) {
@@ -288,15 +296,28 @@ export async function prPollUpdates(
           bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
           const src = c.source ?? 'unknown';
           bySource[src] = (bySource[src] ?? 0) + 1;
+
+          classifiedFindings.push(classifyFinding({
+            threadId: c.threadId,
+            outdated: c.outdated ?? false,
+            resolved: false,
+            severity: c.severity ?? 'N/A',
+            source: c.source ?? 'unknown',
+          }));
         }
       }
+
+      // agentsStatus is available from the parallel fetch above; classifiedAgentsStatus
+      // is computed later (it augments entries that are already resolved here).
+      const allAgentsReady = agentsStatus?.allAgentsReady ?? undefined;
 
       commentsSummary = {
         total: allComments.length,
         unresolved,
         new: newCommentCount,
         bySeverity,
-        bySource
+        bySource,
+        mergeReadiness: computeMergeReadiness({ classifiedFindings, allAgentsReady }),
       };
     } else {
       // Full mode: return complete comment list (legacy behavior)

@@ -9,12 +9,21 @@ import { fetchQodoReview, qodoToNormalizedComments } from '../adapters/qodo.js';
 import { fetchGreptileReview, greptileToNormalizedComments } from '../adapters/greptile.js';
 import { getTrackerResolvedMap } from '../adapters/qodo-tracker.js';
 import type { ICoordinationStateManager } from '../coordination/types.js';
-import type { SummaryInput, SummaryOutput } from '../github/types.js';
+import type { SummaryInput, SummaryOutput, PRMergeStatusData } from '../github/types.js';
+import { QUERIES } from '../github/queries.js';
+import { classifyFinding, computeMergeReadiness } from '../review/classify-unresolved.js';
 
 export const SummaryInputSchema = z.object({
   owner: z.string().min(1, 'Repository owner is required'),
   repo: z.string().min(1, 'Repository name is required'),
   pr: z.number().int().positive('PR number must be positive')
+});
+
+const MergeReadinessSchema = z.object({
+  mergeReady: z.boolean(),
+  reviewReady: z.boolean(),
+  notes: z.array(z.string()),
+  unresolvedByClass: z.record(z.number()),
 });
 
 export const SummaryOutputSchema = z.object({
@@ -30,6 +39,7 @@ export const SummaryOutputSchema = z.object({
     resolved: z.number(),
     unresolved: z.number(),
   }).optional(),
+  mergeReadiness: MergeReadinessSchema.optional(),
 });
 
 /**
@@ -44,13 +54,15 @@ export async function prSummary(
   const validated = SummaryInputSchema.parse(input);
   const { owner, repo, pr } = validated;
 
-  // Fetch review threads, Qodo/Greptile reviews, tracker resolved status, and nitpicks count in parallel
-  const [threadsResult, qodoReview, greptileReview, trackerResolved, resolvedNitpicksCount] = await Promise.all([
+  // Fetch review threads, Qodo/Greptile reviews, tracker resolved status, nitpick count,
+  // and GitHub merge-readiness signals in parallel
+  const [threadsResult, qodoReview, greptileReview, trackerResolved, resolvedNitpicksCount, mergeStatusData] = await Promise.all([
     fetchAllThreads(client, owner, repo, pr, { maxItems: 1000 }),
     fetchQodoReview(owner, repo, pr),
     fetchGreptileReview(owner, repo, pr),
     getTrackerResolvedMap(owner, repo, pr),
-    coordination?.getResolvedNitpicksCount({ owner, repo, pr }) ?? Promise.resolve(0)
+    coordination?.getResolvedNitpicksCount({ owner, repo, pr }) ?? Promise.resolve(0),
+    client.graphql<PRMergeStatusData>(QUERIES.getPRMergeStatus, { owner, repo, pr }).catch(() => null),
   ]);
 
   const { comments, totalCount } = threadsResult;
@@ -96,6 +108,30 @@ export async function prSummary(
     byFile[file] = (byFile[file] || 0) + 1;
   }
 
+  // Classify each unresolved finding to produce merge-readiness semantics.
+  // allUnresolved is a union of ProcessedComment | QodoComment | GreptileComment.
+  // ProcessedComment has `threadId` and `outdated`; QodoComment/GreptileComment use `id` as the thread key
+  // and do not carry an `outdated` field.
+  const classifiedFindings = allUnresolved.map(c => {
+    const threadId = 'threadId' in c ? (c.threadId as string) : c.id;
+    const outdated = ('outdated' in c && typeof c.outdated === 'boolean') ? c.outdated : false;
+    return classifyFinding({
+      threadId,
+      outdated,
+      resolved: c.resolved === true,
+      severity: c.severity as string,
+      source: c.source as string,
+    });
+  });
+
+  const prMergeStatus = mergeStatusData?.repository?.pullRequest ?? null;
+
+  const mergeReadiness = computeMergeReadiness({
+    reviewDecision: prMergeStatus?.reviewDecision ?? null,
+    mergeStateStatus: prMergeStatus?.mergeStateStatus ?? null,
+    classifiedFindings,
+  });
+
   return {
     pr: `${owner}/${repo}#${pr}`,
     total: totalCount + qodoCount + greptileCount,
@@ -112,6 +148,7 @@ export async function prSummary(
             unresolved: unresolvedNitpicks.length
           }
         }
-      : {})
+      : {}),
+    mergeReadiness,
   };
 }
