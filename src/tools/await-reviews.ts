@@ -100,6 +100,14 @@ export async function prAwaitReviews(
     }
   }
 
+  // Always-bind: resolve invocationId for explicit-since callers that bypassed the block above.
+  if (since && invocationStore && invocationId === undefined) {
+    const match = invocationStore.findByPrAndSince(owner, repo, pr, since);
+    if (match) {
+      invocationId = match.id;
+    }
+  }
+
   if (!since) {
     return {
       completed: false,
@@ -125,13 +133,45 @@ export async function prAwaitReviews(
 
   const ok = octokit ?? getOctokit();
 
-  // Fetch head SHA for check runs
+  // Fetch PR data — head SHA for check runs, and state for merged-PR short-circuit.
   let headSha: string | undefined;
+  let prApiData: Awaited<ReturnType<typeof ok.pulls.get>> | undefined;
   try {
-    const prData = await ok.pulls.get({ owner, repo, pull_number: pr });
-    headSha = prData.data.head.sha;
+    prApiData = await ok.pulls.get({ owner, repo, pull_number: pr });
+    headSha = prApiData.data.head.sha;
   } catch {
     // headSha remains undefined — check runs won't be fetched
+  }
+
+  // Merged / closed PR: no point waiting for reviews that will never arrive.
+  if (prApiData && (prApiData.data.merged || prApiData.data.state === 'closed')) {
+    if (invocationStore && invocationId !== undefined) {
+      try {
+        invocationStore.completeInvocation(
+          invocationId,
+          'completed',
+          prApiData.data.merged ? 'merged_before_review' : 'closed_before_review',
+        );
+      } catch {
+        // Non-fatal — status update is best-effort.
+      }
+    }
+    const elapsed = Date.now() - new Date(since).getTime();
+    const prState = prApiData.data.merged ? 'merged' : 'closed';
+    return {
+      completed: true,
+      partial: false,
+      elapsedMs: elapsed,
+      agents: agents.map(agentId => ({
+        agentId,
+        name: INVOKABLE_AGENTS[agentId]?.name ?? agentId,
+        ready: true,
+        agentTimedOut: false,
+        detail: `PR already ${prState}`,
+      })),
+      summary: { ready: agents.length, pending: 0, agentTimedOut: 0, total: agents.length },
+      retryAfterMs: null,
+    };
   }
 
   // Single poll — no loop, no blocking

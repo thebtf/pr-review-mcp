@@ -11,7 +11,7 @@ export interface StoredInvocation {
   agents: string[];       // parsed from JSON column
   since: string;          // ISO 8601
   invokedAt: string;      // ISO 8601
-  status: 'active' | 'completed' | 'partial' | 'timed_out' | 'stale';
+  status: 'active' | 'completed' | 'partial' | 'timed_out' | 'stale' | 'cancelled';
   completedAt: string | null;
   result: object | null;  // parsed from JSON column
 }

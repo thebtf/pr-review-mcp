@@ -10,6 +10,7 @@
 import type Database from 'better-sqlite3';
 import type { StoredInvocation, StoredAgentStatus } from './types.js';
 import type { AgentCompletionResult } from '../agents/completion-detector.js';
+import { INVOKABLE_AGENTS, type InvokableAgentId } from '../agents/registry.js';
 import { logger } from '../logging.js';
 
 // ============================================================================
@@ -86,8 +87,11 @@ export class InvocationStore {
   private readonly stmtInsertInvocation: Database.Statement;
   private readonly stmtInsertAgentStatus: Database.Statement;
   private readonly stmtFindActive: Database.Statement<[string, string, number]>;
+  private readonly stmtFindByPrAndSince: Database.Statement<[string, string, number, string]>;
+  private readonly stmtFindById: Database.Statement<[number]>;
   private readonly stmtGetAgentStatuses: Database.Statement<[number]>;
   private readonly stmtUpdateStatus: Database.Statement;
+  // stmtReap kept for reference; reap() uses a JS-driven approach for per-agent maxWaitMs
   private readonly stmtReap: Database.Statement;
 
   constructor(private readonly db: Database.Database) {
@@ -110,6 +114,17 @@ export class InvocationStore {
       WHERE owner = ? AND repo = ? AND pr = ? AND status = 'active'
       ORDER BY invoked_at DESC
       LIMIT 1
+    `);
+
+    this.stmtFindByPrAndSince = db.prepare<[string, string, number, string], InvocationRow>(`
+      SELECT * FROM invocations
+      WHERE owner = ? AND repo = ? AND pr = ? AND since = ?
+      ORDER BY invoked_at DESC
+      LIMIT 1
+    `);
+
+    this.stmtFindById = db.prepare<[number], InvocationRow>(`
+      SELECT * FROM invocations WHERE id = ?
     `);
 
     this.stmtGetAgentStatuses = db.prepare<[number], AgentStatusRow>(`
@@ -267,7 +282,7 @@ export class InvocationStore {
    */
   updateInvocationStatus(invocationId: number, status: string, result?: object): void {
     const now = new Date().toISOString();
-    const isTerminal = ['completed', 'partial', 'timed_out', 'stale'].includes(status);
+    const isTerminal = ['completed', 'partial', 'timed_out', 'stale', 'cancelled'].includes(status);
 
     this.stmtUpdateStatus.run({
       id: invocationId,
@@ -275,6 +290,21 @@ export class InvocationStore {
       completedAt: isTerminal ? now : null,
       result: result !== undefined ? JSON.stringify(result) : null,
     });
+  }
+
+  /**
+   * Convenience alias for updateInvocationStatus — used by pr_cancel and merged-PR short-circuit.
+   */
+  updateStatus(id: number, status: string, result?: object): void {
+    this.updateInvocationStatus(id, status, result);
+  }
+
+  /**
+   * Explicitly complete an invocation with a terminal status and an optional string result tag.
+   * Convenience wrapper used by the merged-PR short-circuit path.
+   */
+  completeInvocation(id: number, status: string, resultTag: string): void {
+    this.updateInvocationStatus(id, status, { tag: resultTag });
   }
 
   // ============================================================================
@@ -287,6 +317,23 @@ export class InvocationStore {
    */
   findActiveForPR(owner: string, repo: string, pr: number): StoredInvocation | null {
     const row = this.stmtFindActive.get(owner, repo, pr) as InvocationRow | undefined;
+    return row !== undefined ? rowToInvocation(row) : null;
+  }
+
+  /**
+   * Find the most recent invocation matching (owner, repo, pr, since).
+   * Used by pr_await_reviews to bind explicit-since callers to a stored invocation.
+   */
+  findByPrAndSince(owner: string, repo: string, pr: number, since: string): StoredInvocation | null {
+    const row = this.stmtFindByPrAndSince.get(owner, repo, pr, since) as InvocationRow | undefined;
+    return row !== undefined ? rowToInvocation(row) : null;
+  }
+
+  /**
+   * Find an invocation by its primary key.
+   */
+  findById(id: number): StoredInvocation | null {
+    const row = this.stmtFindById.get(id) as InvocationRow | undefined;
     return row !== undefined ? rowToInvocation(row) : null;
   }
 
@@ -344,15 +391,48 @@ export class InvocationStore {
   // ============================================================================
 
   /**
-   * Mark active invocations older than 30 minutes as stale.
+   * Mark active invocations that have exceeded their per-agent maxWaitMs as stale.
+   * Uses a JS-driven approach to apply the correct timeout per agent (instead of a
+   * fixed SQL 30-minute threshold), with a 5-minute margin added on top.
+   *
    * Returns the number of rows updated.
    */
   reap(): number {
-    const result = this.stmtReap.run();
-    if (result.changes > 0) {
-      logger.info(`Reaper marked ${result.changes} stale invocation(s)`);
+    const MARGIN_MS = 5 * 60 * 1000;   // 5 min grace margin
+    const DEFAULT_MAX_WAIT = 600_000;   // 10 min fallback
+
+    const activeRows = this.db
+      .prepare<[], InvocationRow>(`SELECT * FROM invocations WHERE status = 'active'`)
+      .all();
+
+    if (activeRows.length === 0) return 0;
+
+    const now = Date.now();
+    const markStale = this.db.prepare(`UPDATE invocations SET status = 'stale' WHERE id = ?`);
+    let reaped = 0;
+
+    const runTransaction = this.db.transaction(() => {
+      for (const row of activeRows) {
+        const agents = JSON.parse(row.agents) as string[];
+        const maxWait = agents.reduce((acc, agentId) => {
+          const config = INVOKABLE_AGENTS[agentId as InvokableAgentId];
+          return Math.max(acc, config?.completionStrategy.maxWaitMs ?? DEFAULT_MAX_WAIT);
+        }, DEFAULT_MAX_WAIT);
+
+        const age = now - new Date(row.invoked_at).getTime();
+        if (age > maxWait + MARGIN_MS) {
+          markStale.run(row.id);
+          reaped++;
+        }
+      }
+    });
+
+    runTransaction();
+
+    if (reaped > 0) {
+      logger.info(`Reaper marked ${reaped} stale invocation(s)`);
     }
-    return result.changes;
+    return reaped;
   }
 
   /**
@@ -362,7 +442,7 @@ export class InvocationStore {
   gc(): number {
     const deleteTerminal = this.db.prepare(`
       DELETE FROM invocations
-      WHERE status IN ('completed', 'partial', 'timed_out')
+      WHERE status IN ('completed', 'partial', 'timed_out', 'cancelled')
         AND invoked_at < datetime('now', '-7 days')
     `);
 

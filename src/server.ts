@@ -41,6 +41,7 @@ import { prCreate, CreateInputSchema } from './tools/create.js';
 import { prMerge, MergeInputSchema } from './tools/merge.js';
 import { prListPRs, ListPRsInputSchema } from './tools/list-prs.js';
 import { prSessions, SessionsInputSchema } from './tools/sessions.js';
+import { prCancel, CancelInputSchema } from './tools/cancel.js';
 import {
   prClaimWork,
   prReportProgress,
@@ -74,6 +75,7 @@ import {
 
 // Session
 import { MuxSessionManager } from './session/manager.js';
+import { extractMuxMeta } from './session/meta.js';
 
 // Persistence
 import { openDatabase } from './persistence/database.js';
@@ -95,6 +97,7 @@ export class PRReviewMCPServer {
   private githubClient: GitHubClient;
   private httpServer?: import('node:http').Server;
   private sessionManager: MuxSessionManager;
+  private reaperInterval?: ReturnType<typeof setInterval>;
 
   constructor() {
     this.mcpServer = new McpServer(
@@ -120,6 +123,15 @@ export class PRReviewMCPServer {
       const gcStore = new InvocationStore(db);
       gcStore.gc(); // Purge expired records on startup
       setInterval(() => gcStore.gc(), 60 * 60 * 1000).unref(); // Every 60 minutes
+
+      // Background reaper: mark stale invocations per-agent maxWaitMs every 5 minutes.
+      const reaperStore = new InvocationStore(db);
+      const reaperInterval = setInterval(() => {
+        try { reaperStore.reap(); }
+        catch (e) { logger.warning('[reaper] Error during reap cycle', String(e)); }
+      }, 5 * 60 * 1000);
+      reaperInterval.unref();
+      this.reaperInterval = reaperInterval;
     }
 
     logger.initialize(this.mcpServer.server);
@@ -140,6 +152,7 @@ export class PRReviewMCPServer {
     };
 
     process.on('SIGINT', async () => {
+      if (this.reaperInterval) clearInterval(this.reaperInterval);
       if (this.httpServer) {
         this.httpServer.close();
       }
@@ -478,6 +491,20 @@ export class PRReviewMCPServer {
       catch (e) { throw toMcpError(e); }
     });
 
+    this.mcpServer.registerTool('pr_cancel', {
+      title: 'Cancel Review Invocation',
+      description: 'Cancel an active review invocation, preventing further polling. Provide either invocationId (from pr_invoke or pr_sessions) or (owner, repo, pr) to cancel the most recent active invocation for that PR.',
+      inputSchema: CancelInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async (args, extra) => {
+      const ctx = this.sessionManager.getContext(extra);
+      if (!ctx.invocationStore) {
+        return PRReviewMCPServer.textResult({ cancelled: false, error: 'Persistence unavailable (SQLite not initialized)' });
+      }
+      try { return PRReviewMCPServer.textResult(prCancel(args, ctx.invocationStore)); }
+      catch (e) { throw toMcpError(e); }
+    });
+
   }
 
   // --------------------------------------------------------------------------
@@ -496,9 +523,13 @@ export class PRReviewMCPServer {
     };
 
     const makeReviewCallback = (generator: typeof generateReviewPrompt) => {
-      return async (args: ReviewPromptArgs) => ({
-        messages: [{ role: 'user' as const, content: { type: 'text' as const, text: await generator(args, client) } }],
-      });
+      return async (args: ReviewPromptArgs, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+        const muxMeta = extractMuxMeta(extra as { _meta?: Record<string, unknown> } | undefined);
+        const sessionCwd = muxMeta.env.PWD || undefined;
+        return {
+          messages: [{ role: 'user' as const, content: { type: 'text' as const, text: await generator(args, client, sessionCwd) } }],
+        };
+      };
     };
 
     this.mcpServer.registerPrompt('review', {
