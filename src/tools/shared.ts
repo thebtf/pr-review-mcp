@@ -227,6 +227,7 @@ export async function fetchAllThreads(
   const comments: ProcessedComment[] = [];
   let cursor = startCursor;
   let totalCount = 0;
+  let graphqlHasNextPage = false;
 
   // Fetch inline threads and CodeRabbit nitpicks in parallel (only on first page)
   const nitpicksPromise = startCursor === null
@@ -264,9 +265,11 @@ export async function fetchAllThreads(
 
     if (!threads.pageInfo.hasNextPage) {
       cursor = threads.pageInfo.endCursor;
+      graphqlHasNextPage = false;
       break;
     }
     cursor = threads.pageInfo.endCursor;
+    graphqlHasNextPage = true;
   }
 
   // Merge nitpicks (only on first page fetch)
@@ -301,6 +304,6 @@ export async function fetchAllThreads(
     totalCount += unresolvedNitpicks.length;
   }
 
-  const hasMore = comments.length >= maxItems || totalCount > comments.length;
+  const hasMore = graphqlHasNextPage || comments.length >= maxItems;
   return { comments, totalCount, cursor, hasMore };
 }
