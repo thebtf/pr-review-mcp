@@ -102,6 +102,7 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     completionStrategy: {
       sources: ['issue_comments'],
       bodyPattern: /(?:<h3>Code Review by Qodo<\/h3>|## PR Reviewer Guide)/,
+      excludePatterns: [/rate limit/i],
       filterPendingReviews: false,
       expectedTimeMs: 360_000,   // 6 min
       maxWaitMs: 600_000,        // 10 min
@@ -116,7 +117,7 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     completionStrategy: {
       sources: ['reviews'],
       bodyPattern: /^## Code Review\n/,
-      excludePatterns: [/I'm currently reviewing/i, /will post my feedback shortly/i],
+      excludePatterns: [/I'm currently reviewing/i, /will post my feedback shortly/i, /rate limit/i, /quota exceeded/i],
       filterPendingReviews: true,
       expectedTimeMs: 240_000,   // 4 min
       maxWaitMs: 600_000,        // 10 min
@@ -130,9 +131,9 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     supports: [],
     authorPattern: 'chatgpt-codex-connector',
     completionStrategy: {
-      sources: ['reviews'],
-      bodyPattern: /^### 💡 Codex Review/,
-      excludePatterns: [/create a Codex account/i, /create an environment/i],
+      sources: ['reviews', 'issue_comments'],
+      bodyPattern: /(^### 💡 Codex Review|^Codex Review:)/,
+      excludePatterns: [/create a Codex account/i, /create an environment/i, /rate limit/i, /API rate/i],
       filterPendingReviews: true,
       expectedTimeMs: 300_000,   // 5 min
       maxWaitMs: 600_000,        // 10 min
@@ -147,6 +148,7 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     completionStrategy: {
       sources: ['reviews'],
       bodyPattern: /^## Pull request overview\n/,
+      excludePatterns: [/rate limit/i],
       filterPendingReviews: true,
       expectedTimeMs: 30_000,    // 30 sec
       maxWaitMs: 1_800_000,      // 30 min (can be slow)
@@ -161,7 +163,7 @@ export const INVOKABLE_AGENTS: Record<InvokableAgentId, AgentConfig> = {
     completionStrategy: {
       sources: ['reviews', 'issue_comments'],
       bodyPattern: /(?:<sub>\d+ files reviewed|<h2>Greptile Overview<\/h2>)/,
-      excludePatterns: [/free trial has ended/i],
+      excludePatterns: [/free trial has ended/i, /rate limit/i],
       filterPendingReviews: true,
       expectedTimeMs: 300_000,   // 5 min
       maxWaitMs: 600_000,        // 10 min
