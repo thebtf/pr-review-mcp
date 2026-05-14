@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-14
+
+### Added
+
+- **`pr_cancel` tool** — programmatic cancellation of active invocations by `(owner, repo, pr)` or `invocationId`. Idempotent for already-terminal invocations.
+- **Structured `waitState` diagnostics** — non-ready agents in `pr_await_reviews` and `pr_poll_updates` now report `waitState: normal | slow | stalled | provider_limit | timed_out` with `expectedTimeExceeded`, `noProgressSinceMs`, and `providerClue` fields.
+- **Shared `wait-state.ts` module** — `classifyWaitState()` pure function used by both await-reviews and poll tools.
+- **`findByPrAndSince` and `findById`** methods on `InvocationStore` for exact invocation lookup.
+
+### Changed
+
+- **Codex completion detection** — `sources` expanded from `['reviews']` to `['reviews', 'issue_comments']`; body pattern now matches both `### 💡 Codex Review` (formal) and `Codex Review:` (issue comment format).
+- **Provider-limit `excludePatterns`** — rate-limit and account-limit patterns added to all 7 agents (Codex, Gemini, Copilot, Greptile, Qodo; CodeRabbit and Sourcery verified).
+- **Smart reaper** — `reap()` now uses per-agent `maxWaitMs` from registry instead of a fixed 30-minute threshold. Computes `MAX(agent.maxWaitMs) + 5min margin` per invocation.
+- **Background reaper timer** — 5-minute interval server-side reaper auto-expires stale invocations without client polling. Timer is `.unref()`'d and cleared on shutdown.
+- **Always-bind invocation** — `pr_await_reviews` now resolves `invocationId` via `findByPrAndSince` even when callers pass explicit `since`/`agents`, ensuring agent status is always persisted to SQLite.
+- **Merged-PR short-circuit** — `pr_await_reviews` detects merged/closed PRs and returns `completed: true` immediately without polling GitHub review APIs.
+
+### Fixed
+
+- **Per-session CWD isolation** — `detectGitRepo()` and `detectCurrentBranch()` accept optional `cwd` parameter; `buildContext()` passes per-session CWD to prevent cross-session repo detection leaks in mcp-mux shared-upstream mode.
+
+### Closes
+
+- engram #211 — Codex issue-comment completion detection
+- engram #210 — structured stall diagnostics
+- engram #197 — CWD leak across mcp-mux sessions
+- engram #51 — stale invocations, background reaper, pr_cancel
+- engram #200 — issue-comments vs reviews API split for Codex
+
 ## [0.6.0] - 2026-04-11
 
 ### Added
