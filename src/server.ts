@@ -525,7 +525,7 @@ export class PRReviewMCPServer {
     const makeReviewCallback = (generator: typeof generateReviewPrompt) => {
       return async (args: ReviewPromptArgs, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
         const muxMeta = extractMuxMeta(extra as { _meta?: Record<string, unknown> } | undefined);
-        const sessionCwd = muxMeta.env.PWD || undefined;
+        const sessionCwd = muxMeta.cwd;
         return {
           messages: [{ role: 'user' as const, content: { type: 'text' as const, text: await generator(args, client, sessionCwd) } }],
         };

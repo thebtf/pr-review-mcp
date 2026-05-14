@@ -12,6 +12,7 @@ import { DEFAULT_SESSION_ID } from './types.js';
 /** Shape of the _meta object as injected by mcp-mux */
 interface MuxMetaRaw {
   muxSessionId?: unknown;
+  muxCwd?: unknown;
   muxEnv?: unknown;
   [key: string]: unknown;
 }
@@ -42,6 +43,10 @@ export function extractMuxMeta(extra: { _meta?: Record<string, unknown> } | unde
     ? meta.muxSessionId
     : DEFAULT_SESSION_ID;
 
+  const cwd = typeof meta.muxCwd === 'string' && meta.muxCwd.length > 0
+    ? meta.muxCwd
+    : undefined;
+
   let env: Record<string, string> = {};
   if (typeof meta.muxEnv === 'object' && meta.muxEnv !== null && !Array.isArray(meta.muxEnv)) {
     const raw = meta.muxEnv as Record<string, unknown>;
@@ -54,5 +59,5 @@ export function extractMuxMeta(extra: { _meta?: Record<string, unknown> } | unde
     env = filtered;
   }
 
-  return { sessionId, env };
+  return { sessionId, cwd, env };
 }

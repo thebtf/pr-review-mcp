@@ -20,6 +20,8 @@ import type { InvocationStore } from '../persistence/invocation-store.js';
 export interface MuxMeta {
   /** Session identifier from mcp-mux, or "default" for stdio/direct connections */
   readonly sessionId: string;
+  /** Working directory of the CC session injected by mcp-mux, or undefined in stdio mode */
+  readonly cwd?: string;
   /** Per-session environment variables diff from mcp-mux */
   readonly env: Readonly<Record<string, string>>;
 }
@@ -40,6 +42,8 @@ export interface MuxSessionContext {
   readonly db: Database.Database | null;
   /** Invocation tracking store (null if DB unavailable) */
   readonly invocationStore: InvocationStore | null;
+  /** Working directory of the CC session (from mcp-mux _meta.muxCwd), undefined in stdio mode */
+  readonly cwd?: string;
   /** Timestamp of last access (for TTL cleanup) */
   lastActivity: number;
 }

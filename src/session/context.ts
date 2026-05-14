@@ -21,6 +21,7 @@ export function createSessionContext(
   sessionId: string,
   token: string,
   db: import('better-sqlite3').Database | null = null,
+  cwd?: string,
 ): MuxSessionContext {
   const octokit = createOctokitForToken(token);
   const graphql = createGraphQLForToken(token);
@@ -38,6 +39,7 @@ export function createSessionContext(
     token,
     db,
     invocationStore: db ? new InvocationStore(db) : null,
+    cwd,
     lastActivity: Date.now(),
   };
 }

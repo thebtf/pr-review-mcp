@@ -61,7 +61,17 @@ export class MuxSessionManager {
         logger.warning(
           `[session] Token changed for session ${meta.sessionId}, recreating context`
         );
-        const newCtx = createSessionContext(meta.sessionId, token, this.db);
+        const newCtx = createSessionContext(meta.sessionId, token, this.db, meta.cwd);
+        this.sessions.set(meta.sessionId, newCtx);
+        return newCtx;
+      }
+
+      // CWD changed (e.g., user switched projects in the same CC session) — update in place
+      if (meta.cwd !== undefined && existing.cwd !== meta.cwd) {
+        logger.info(
+          `[session] CWD changed for session ${meta.sessionId}: ${existing.cwd} → ${meta.cwd}`
+        );
+        const newCtx = createSessionContext(meta.sessionId, token, this.db, meta.cwd);
         this.sessions.set(meta.sessionId, newCtx);
         return newCtx;
       }
@@ -71,7 +81,7 @@ export class MuxSessionManager {
     }
 
     // Create new session context
-    const ctx = createSessionContext(meta.sessionId, token, this.db);
+    const ctx = createSessionContext(meta.sessionId, token, this.db, meta.cwd);
     this.sessions.set(meta.sessionId, ctx);
     logger.info(`[session] Created context for session ${meta.sessionId}`);
     return ctx;
