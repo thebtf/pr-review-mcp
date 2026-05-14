@@ -15,6 +15,8 @@ import {
   type AgentStatus,
   type AgentsStatus,
 } from '../agents/completion-detector.js';
+import { classifyWaitState, type WaitState, type WaitStateFields } from './wait-state.js';
+export type { WaitState, WaitStateFields } from './wait-state.js';
 
 // ============================================================================
 // Schema
@@ -36,6 +38,19 @@ export type PollInput = z.infer<typeof PollInputSchema>;
 // ============================================================================
 
 export type { AgentStatus, AgentsStatus } from '../agents/completion-detector.js';
+
+/** Agent entry in the poll response, augmented with wait-state diagnostics */
+export interface PollAgentStatus extends AgentStatus {
+  waitState?: WaitState;
+  expectedTimeExceeded?: boolean;
+  noProgressSinceMs?: number | null;
+  providerClue?: string;
+}
+
+export interface PollAgentsStatus {
+  allAgentsReady: boolean;
+  agents: PollAgentStatus[];
+}
 
 export interface CommitInfo {
   sha: string;
@@ -75,7 +90,7 @@ export interface PollOutput {
       pending: number;
       checks: CheckInfo[];
     } | null;
-    agentsStatus: AgentsStatus | null;
+    agentsStatus: PollAgentsStatus | null;
   };
 }
 
@@ -299,8 +314,29 @@ export async function prPollUpdates(
     }
   }
 
+  // Augment agent entries with wait-state classification for non-ready agents.
+  // elapsedMs is measured from the `since` cursor — when absent, treat as 0.
+  const sinceTs = since ? new Date(since).getTime() : Date.now();
+  const pollElapsedMs = Date.now() - sinceTs;
+  const classifiedAgentsStatus: PollAgentsStatus | null = agentsStatus
+    ? {
+        allAgentsReady: agentsStatus.allAgentsReady,
+        agents: agentsStatus.agents.map((a: AgentStatus): PollAgentStatus => {
+          if (a.ready) return a;
+          const fields = classifyWaitState(
+            a.agentId,
+            pollElapsedMs,
+            false, // poll has no per-agent timeout tracking; timed_out is handled by await-reviews
+            a.lastComment,
+            undefined,
+          );
+          return { ...a, ...fields };
+        }),
+      }
+    : null;
+
   // Determine if there are updates including agent activity
-  const hasAgentUpdates = agentsStatus?.agents?.some((a: AgentStatus) => a.ready) ?? false;
+  const hasAgentUpdates = classifiedAgentsStatus?.agents?.some((a: PollAgentStatus) => a.ready) ?? false;
 
   const hasUpdates =
     newCommentCount > 0 ||
@@ -322,7 +358,7 @@ export async function prPollUpdates(
       resolvedThreads,
       newCommits: commits,
       checkStatus,
-      agentsStatus
+      agentsStatus: classifiedAgentsStatus,
     }
   };
 }

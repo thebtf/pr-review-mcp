@@ -15,6 +15,8 @@ import { getDefaultAgents, isInvokableAgent, INVOKABLE_AGENTS, type InvokableAge
 import { fetchCompletionStatus } from '../agents/completion-detector.js';
 import { getOctokit } from '../github/octokit.js';
 import type { InvocationStore } from '../persistence/invocation-store.js';
+import { classifyWaitState, type WaitState } from './wait-state.js';
+export type { WaitState } from './wait-state.js';
 
 // ============================================================================
 // Input/Output Schemas
@@ -43,6 +45,14 @@ export interface AgentAwaitStatus {
   source?: string;
   lastActivity?: string;
   detail?: string;
+  /** Structured wait-state classification */
+  waitState?: WaitState;
+  /** Whether expectedTimeMs has been exceeded */
+  expectedTimeExceeded?: boolean;
+  /** Milliseconds since last observed signal from this agent (null if no signal ever seen) */
+  noProgressSinceMs?: number | null;
+  /** Raw provider clue if available (e.g., check-run state, last comment timestamp) */
+  providerClue?: string;
 }
 
 export interface AwaitResult {
@@ -198,6 +208,22 @@ export async function prAwaitReviews(
       detail: detected?.detail ?? (isTimedOut ? `Exceeded maxWaitMs (${Math.round(maxWaitMs / 1000)}s)` : undefined),
     };
   });
+
+  // Classify waitState for non-ready agents
+  for (const status of agentStatuses) {
+    if (status.ready) continue;
+    const fields = classifyWaitState(
+      status.agentId,
+      elapsedMs,
+      status.agentTimedOut,
+      status.lastActivity,
+      status.detail,
+    );
+    status.waitState = fields.waitState;
+    status.expectedTimeExceeded = fields.expectedTimeExceeded;
+    status.noProgressSinceMs = fields.noProgressSinceMs;
+    status.providerClue = fields.providerClue;
+  }
 
   const ready = agentStatuses.filter(a => a.ready).length;
   const agentTimedOut = agentStatuses.filter(a => a.agentTimedOut && !a.ready).length;

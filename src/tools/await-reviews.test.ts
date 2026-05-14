@@ -1,11 +1,13 @@
 /**
- * Unit tests for pr_await_reviews — T004 (always-bind), T005 (merged-PR short-circuit).
+ * Unit tests for pr_await_reviews — T004 (always-bind), T005 (merged-PR short-circuit),
+ * T011 (WaitState classification).
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { createRequire } from 'module';
 import { InvocationStore } from '../persistence/invocation-store.js';
 import { prAwaitReviews } from './await-reviews.js';
+import { classifyWaitState } from './wait-state.js';
 import type { Octokit } from '@octokit/rest';
 
 // ============================================================================
@@ -189,5 +191,134 @@ describe('prAwaitReviews — always-bind invocationId', () => {
     // No error field — the call completed normally (no invocation to bind to is fine).
     expect(result.error).toBeUndefined();
     expect(result.completed).toBe(false);
+  });
+});
+
+// ============================================================================
+// T011 — WaitState classification (unit tests on classifyWaitState helper)
+// ============================================================================
+
+describe('classifyWaitState — WaitState unit classification', () => {
+  // coderabbit: expectedTimeMs=300_000, maxWaitMs=720_000
+  // sourcery:   expectedTimeMs=120_000, maxWaitMs=300_000
+
+  it('returns normal when elapsed < expectedTimeMs', () => {
+    // 1 minute elapsed, coderabbit expects 5 minutes
+    const result = classifyWaitState('coderabbit', 60_000, false, undefined, undefined);
+    expect(result.waitState).toBe('normal');
+    expect(result.expectedTimeExceeded).toBe(false);
+    expect(result.noProgressSinceMs).toBeNull();
+  });
+
+  it('returns slow when elapsed > expectedTimeMs and lastActivity is recent (<2 min)', () => {
+    // 6 minutes elapsed (past 5-min expected), but agent signalled 30 seconds ago
+    const recentActivity = new Date(Date.now() - 30_000).toISOString();
+    const result = classifyWaitState('coderabbit', 360_000, false, recentActivity, undefined);
+    expect(result.waitState).toBe('slow');
+    expect(result.expectedTimeExceeded).toBe(true);
+    expect(result.noProgressSinceMs).toBeGreaterThanOrEqual(0);
+    expect(result.noProgressSinceMs).toBeLessThanOrEqual(60_000);
+  });
+
+  it('returns stalled when elapsed > expectedTimeMs and no lastActivity', () => {
+    // 6 minutes elapsed, no signal ever seen
+    const result = classifyWaitState('coderabbit', 360_000, false, undefined, undefined);
+    expect(result.waitState).toBe('stalled');
+    expect(result.expectedTimeExceeded).toBe(true);
+    expect(result.noProgressSinceMs).toBeNull();
+  });
+
+  it('returns stalled when elapsed > expectedTimeMs and lastActivity is old (>2 min)', () => {
+    // 6 minutes elapsed, last signal was 5 minutes ago
+    const oldActivity = new Date(Date.now() - 300_000).toISOString();
+    const result = classifyWaitState('coderabbit', 360_000, false, oldActivity, undefined);
+    expect(result.waitState).toBe('stalled');
+    expect(result.expectedTimeExceeded).toBe(true);
+  });
+
+  it('returns timed_out when timedOut=true regardless of other fields', () => {
+    const result = classifyWaitState('coderabbit', 720_000, true, undefined, undefined);
+    expect(result.waitState).toBe('timed_out');
+    expect(result.expectedTimeExceeded).toBe(true);
+  });
+
+  it('returns timed_out even when elapsed < expectedTimeMs if timedOut=true', () => {
+    // Unusual but possible if caller explicitly marks as timed out
+    const result = classifyWaitState('sourcery', 10_000, true, undefined, undefined);
+    expect(result.waitState).toBe('timed_out');
+  });
+
+  it('returns provider_limit when detail matches an excludePattern', () => {
+    // sourcery has excludePatterns: [/rate limit/i, /review limit/i]
+    const result = classifyWaitState('sourcery', 10_000, false, undefined, 'You have hit the rate limit for reviews');
+    expect(result.waitState).toBe('provider_limit');
+    expect(result.providerClue).toMatch(/rate limit/i);
+  });
+
+  it('sets expectedTimeExceeded=true when elapsed >= expectedTimeMs', () => {
+    // Exactly at threshold
+    const result = classifyWaitState('sourcery', 120_000, false, undefined, undefined);
+    expect(result.expectedTimeExceeded).toBe(true);
+  });
+
+  it('sets expectedTimeExceeded=false when elapsed < expectedTimeMs', () => {
+    const result = classifyWaitState('sourcery', 119_999, false, undefined, undefined);
+    expect(result.expectedTimeExceeded).toBe(false);
+  });
+
+  it('noProgressSinceMs reflects time since lastActivity', () => {
+    const activityTime = new Date(Date.now() - 45_000).toISOString();
+    const result = classifyWaitState('coderabbit', 60_000, false, activityTime, undefined);
+    // Should be approximately 45 seconds (±2s tolerance for test execution time)
+    expect(result.noProgressSinceMs).toBeGreaterThanOrEqual(43_000);
+    expect(result.noProgressSinceMs).toBeLessThanOrEqual(50_000);
+  });
+});
+
+// ============================================================================
+// T011 — WaitState in prAwaitReviews integration
+// ============================================================================
+
+describe('prAwaitReviews — waitState attached to non-ready agents', () => {
+  it('attaches waitState=normal to a pending agent when elapsed < expectedTimeMs', async () => {
+    const store = makeStore();
+    // 1 minute ago — coderabbit expects 5 minutes
+    const since = new Date(Date.now() - 60_000).toISOString();
+    store.record({
+      owner: 'acme', repo: 'api', pr: 10,
+      sessionId: 's', agents: ['coderabbit'], since,
+    });
+
+    const octokit = makeMockOctokit({ merged: false, state: 'open' });
+
+    const result = await prAwaitReviews(
+      { owner: 'acme', repo: 'api', pr: 10, agents: ['coderabbit'], since, force: false },
+      octokit,
+      store,
+    );
+
+    const agent = result.agents.find(a => a.agentId === 'coderabbit');
+    expect(agent).toBeDefined();
+    expect(agent!.ready).toBe(false);
+    expect(agent!.waitState).toBe('normal');
+    expect(agent!.expectedTimeExceeded).toBe(false);
+    expect(agent!.noProgressSinceMs).toBeNull();
+  });
+
+  it('ready agents have no waitState field set', async () => {
+    const store = makeStore();
+    const octokit = makeMockOctokit({ merged: true, state: 'closed' });
+    const since = new Date(Date.now() - 60_000).toISOString();
+
+    const result = await prAwaitReviews(
+      { owner: 'acme', repo: 'api', pr: 11, agents: ['coderabbit'], since, force: false },
+      octokit,
+      store,
+    );
+
+    const agent = result.agents.find(a => a.agentId === 'coderabbit');
+    expect(agent!.ready).toBe(true);
+    // Ready agents skip classification — waitState should be undefined
+    expect(agent!.waitState).toBeUndefined();
   });
 });
