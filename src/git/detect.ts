@@ -13,12 +13,13 @@ const DEFAULT_BRANCHES = new Set(['main', 'master', 'dev', 'develop', 'HEAD']);
  * Detect the current git branch name.
  * Returns null if not in a git repo, detached HEAD returns "HEAD".
  */
-export function detectCurrentBranch(): string | null {
+export function detectCurrentBranch(cwd?: string): string | null {
   try {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       timeout: 5000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(cwd ? { cwd } : {}),
     }).trim();
     return branch || null;
   } catch {
@@ -31,12 +32,13 @@ export function detectCurrentBranch(): string | null {
  * Supports both SSH (git@github.com:owner/repo.git) and HTTPS (https://github.com/owner/repo.git) formats.
  * Returns null if not in a git repo or remote is not a GitHub URL.
  */
-export function detectGitRepo(): { owner: string; repo: string } | null {
+export function detectGitRepo(cwd?: string): { owner: string; repo: string } | null {
   try {
     const url = execSync('git remote get-url origin', {
       timeout: 5000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(cwd ? { cwd } : {}),
     }).trim();
 
     // SSH format: git@github.com:owner/repo.git

@@ -511,9 +511,10 @@ X Skipping MCP final validation in Step 7
  */
 export async function generateReviewPrompt(
   args: ReviewPromptArgs,
-  client: GitHubClient
+  client: GitHubClient,
+  sessionCwd?: string
 ): Promise<string> {
-  const context = await buildContext(args, client);
+  const context = await buildContext(args, client, sessionCwd);
 
   // Branch protection: refuse if PR mismatch detected
   if (context.branchMismatch) {
@@ -542,9 +543,10 @@ export async function generateReviewPrompt(
  */
 export async function generateBackgroundReviewPrompt(
   args: ReviewPromptArgs,
-  client: GitHubClient
+  client: GitHubClient,
+  sessionCwd?: string
 ): Promise<string> {
-  const context = await buildContext(args, client);
+  const context = await buildContext(args, client, sessionCwd);
 
   // Same edge cases as pr:review
   if (context.branchMismatch) {
@@ -606,7 +608,8 @@ function normalizeArgs(args: ReviewPromptArgs): { owner?: string; repo?: string;
  */
 async function buildContext(
   args: ReviewPromptArgs,
-  client: GitHubClient
+  client: GitHubClient,
+  sessionCwd?: string
 ): Promise<PromptContext> {
   const desiredWorkers = Math.max(1, parseInt(args.workers || '3', 10) || 3);
   const envConfig = getEnvConfig();
@@ -614,7 +617,7 @@ async function buildContext(
   // Normalize args (parse URL if provided)
   const normalized = normalizeArgs(args);
 
-  const detectedRepo = detectGitRepo();
+  const detectedRepo = detectGitRepo(sessionCwd);
   if (!normalized.owner || !normalized.repo) {
     if (detectedRepo) {
       normalized.owner = detectedRepo.owner;
@@ -635,7 +638,7 @@ async function buildContext(
   const sameRepo = !!detectedRepo && detectedRepo.owner === owner && detectedRepo.repo === repo;
 
   // --- Branch protection (runs BEFORE explicit PR processing) ---
-  const branch = detectCurrentBranch();
+  const branch = detectCurrentBranch(sessionCwd);
   let cachedPRs: ListPRsOutput | null = null;
 
   if (branch && !isDefaultBranch(branch) && sameRepo) {

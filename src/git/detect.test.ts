@@ -53,6 +53,27 @@ describe('detectCurrentBranch', () => {
       stdio: ['pipe', 'pipe', 'pipe']
     });
   });
+
+  it('passes cwd to execSync when provided', () => {
+    mockExecSync.mockReturnValue('main\n');
+    detectCurrentBranch('/some/path');
+    expect(mockExecSync).toHaveBeenCalledWith('git rev-parse --abbrev-ref HEAD', {
+      timeout: 5000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: '/some/path',
+    });
+  });
+
+  it('does not include cwd in options when not provided', () => {
+    mockExecSync.mockReturnValue('main\n');
+    detectCurrentBranch();
+    expect(mockExecSync).toHaveBeenCalledWith('git rev-parse --abbrev-ref HEAD', {
+      timeout: 5000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  });
 });
 
 describe('detectGitRepo', () => {
@@ -105,6 +126,27 @@ describe('detectGitRepo', () => {
       timeout: 5000,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe']
+    });
+  });
+
+  it('passes cwd to execSync when provided', () => {
+    mockExecSync.mockReturnValue('git@github.com:owner/repo.git\n');
+    detectGitRepo('/some/path');
+    expect(mockExecSync).toHaveBeenCalledWith('git remote get-url origin', {
+      timeout: 5000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: '/some/path',
+    });
+  });
+
+  it('does not include cwd in options when not provided', () => {
+    mockExecSync.mockReturnValue('git@github.com:owner/repo.git\n');
+    detectGitRepo();
+    expect(mockExecSync).toHaveBeenCalledWith('git remote get-url origin', {
+      timeout: 5000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
   });
 });
